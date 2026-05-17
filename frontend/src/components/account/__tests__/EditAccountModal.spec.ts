@@ -217,6 +217,28 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('rehydrates and submits the OpenAI API Key upstream mode', async () => {
+    const account = buildAccount()
+    account.extra = {
+      openai_apikey_upstream_mode: 'chat_completions'
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const upstreamModeSelect = wrapper.get('[data-testid="openai-apikey-upstream-mode"]')
+
+    expect((upstreamModeSelect.element as HTMLSelectElement).value).toBe('chat_completions')
+
+    await upstreamModeSelect.setValue('responses')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_apikey_upstream_mode).toBe('responses')
+  })
+
   it('submits account-level Codex image generation bridge override', async () => {
     const account = buildAccount()
     account.extra = {

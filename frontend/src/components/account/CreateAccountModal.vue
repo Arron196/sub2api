@@ -1044,6 +1044,18 @@
           <p class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
+        <div v-if="form.platform === 'openai'">
+          <label class="input-label">{{ t('admin.accounts.openai.apiKeyUpstreamMode') }}</label>
+          <div class="max-w-sm">
+            <Select
+              v-model="openaiAPIKeyUpstreamMode"
+              :options="openAIAPIKeyUpstreamModeOptions"
+              data-testid="openai-apikey-upstream-mode"
+            />
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.openai.apiKeyUpstreamModeDesc') }}</p>
+        </div>
+
         <!-- Gemini API Key tier selection -->
         <div v-if="form.platform === 'gemini'">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
@@ -3122,7 +3134,8 @@ import type {
   CheckMixedChannelResponse,
   CreateAccountRequest,
   CodexSessionImportMessage,
-  OpenAICompactMode
+  OpenAICompactMode,
+  OpenAIAPIKeyUpstreamMode
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -3279,6 +3292,7 @@ const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
+const openaiAPIKeyUpstreamMode = ref<OpenAIAPIKeyUpstreamMode>('auto')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -3335,6 +3349,12 @@ const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
+])
+
+const openAIAPIKeyUpstreamModeOptions = computed(() => [
+  { value: 'auto', label: t('admin.accounts.openai.apiKeyUpstreamModeAuto') },
+  { value: 'responses', label: t('admin.accounts.openai.apiKeyUpstreamModeResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.apiKeyUpstreamModeChatCompletions') }
 ])
 
 function buildAntigravityExtra(): Record<string, unknown> | undefined {
@@ -4042,6 +4062,7 @@ const resetForm = () => {
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
   openAICompactMode.value = 'auto'
+  openaiAPIKeyUpstreamMode.value = 'auto'
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
@@ -4105,6 +4126,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
   } else if (accountCategory.value === 'apikey') {
+    extra.openai_apikey_upstream_mode = openaiAPIKeyUpstreamMode.value
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
   }

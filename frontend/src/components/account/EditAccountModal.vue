@@ -69,6 +69,18 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
+        <div v-if="account.platform === 'openai'">
+          <label class="input-label">{{ t('admin.accounts.openai.apiKeyUpstreamMode') }}</label>
+          <div class="max-w-sm">
+            <Select
+              v-model="openaiAPIKeyUpstreamMode"
+              :options="openAIAPIKeyUpstreamModeOptions"
+              data-testid="openai-apikey-upstream-mode"
+            />
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.openai.apiKeyUpstreamModeDesc') }}</p>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -2182,7 +2194,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
-import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse, OpenAICompactMode } from '@/types'
+import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse, OpenAICompactMode, OpenAIAPIKeyUpstreamMode } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -2332,6 +2344,7 @@ const customBaseUrl = ref('')
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
+const openaiAPIKeyUpstreamMode = ref<OpenAIAPIKeyUpstreamMode>('auto')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -2433,6 +2446,13 @@ const openAICompactModeOptions = computed(() => [
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
 ])
+const openAIAPIKeyUpstreamModeOptions = computed(() => [
+  { value: 'auto', label: t('admin.accounts.openai.apiKeyUpstreamModeAuto') },
+  { value: 'responses', label: t('admin.accounts.openai.apiKeyUpstreamModeResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.apiKeyUpstreamModeChatCompletions') }
+])
+const isOpenAIAPIKeyUpstreamMode = (value: unknown): value is OpenAIAPIKeyUpstreamMode =>
+  value === 'auto' || value === 'responses' || value === 'chat_completions'
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
@@ -2582,6 +2602,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
   openAICompactMode.value = 'auto'
+  openaiAPIKeyUpstreamMode.value = 'auto'
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -2592,6 +2613,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
+    const upstreamMode = extra?.openai_apikey_upstream_mode
+    if (newAccount.type === 'apikey' && isOpenAIAPIKeyUpstreamMode(upstreamMode)) {
+      openaiAPIKeyUpstreamMode.value = upstreamMode
+    }
     const codexImageGenerationBridgeValue = typeof extra?.codex_image_generation_bridge === 'boolean'
       ? extra.codex_image_generation_bridge
       : extra?.codex_image_generation_bridge_enabled
@@ -3705,6 +3730,7 @@ const handleSubmit = async () => {
         newExtra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
         newExtra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
       } else if (props.account.type === 'apikey') {
+        newExtra.openai_apikey_upstream_mode = openaiAPIKeyUpstreamMode.value
         newExtra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
         newExtra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
       }
