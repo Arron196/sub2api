@@ -217,6 +217,25 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI API Key 批量编辑应提交上游接口模式字段', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-openai-apikey-upstream-mode-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-apikey-upstream-mode-select"]').setValue('chat_completions')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_apikey_upstream_mode: 'chat_completions'
+      }
+    })
+  })
+
   it('筛选 OpenAI 账号批量编辑应提交 Compact 模式和专属模型映射', async () => {
     const wrapper = mountModal({
       accountIds: [],

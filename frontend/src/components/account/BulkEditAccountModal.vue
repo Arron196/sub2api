@@ -742,6 +742,42 @@
         </div>
       </div>
 
+      <!-- OpenAI API Key upstream mode -->
+      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-openai-apikey-upstream-mode-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-apikey-upstream-mode-enabled"
+            >
+              {{ t('admin.accounts.openai.apiKeyUpstreamMode') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.apiKeyUpstreamModeDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIAPIKeyUpstreamMode"
+            id="bulk-edit-openai-apikey-upstream-mode-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-apikey-upstream-mode"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-apikey-upstream-mode"
+          :class="!enableOpenAIAPIKeyUpstreamMode && 'pointer-events-none opacity-50'"
+        >
+          <Select
+            v-model="openaiAPIKeyUpstreamMode"
+            data-testid="bulk-edit-openai-apikey-upstream-mode-select"
+            :options="openAIAPIKeyUpstreamModeOptions"
+            aria-labelledby="bulk-edit-openai-apikey-upstream-mode-label"
+          />
+        </div>
+      </div>
+
       <!-- OpenAI API Key WS mode -->
       <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1093,7 +1129,14 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { Proxy as ProxyConfig, AdminGroup, AccountPlatform, AccountType, OpenAICompactMode } from '@/types'
+import type {
+  Proxy as ProxyConfig,
+  AdminGroup,
+  AccountPlatform,
+  AccountType,
+  OpenAICompactMode,
+  OpenAIAPIKeyUpstreamMode
+} from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -1217,6 +1260,7 @@ const enableStatus = ref(false)
 const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIWSMode = ref(false)
+const enableOpenAIAPIKeyUpstreamMode = ref(false)
 const enableOpenAIAPIKeyWSMode = ref(false)
 const enableCodexCLIOnly = ref(false)
 const enableOpenAICompactMode = ref(false)
@@ -1244,6 +1288,7 @@ const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
+const openaiAPIKeyUpstreamMode = ref<OpenAIAPIKeyUpstreamMode>('auto')
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
@@ -1290,6 +1335,11 @@ const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
+])
+const openAIAPIKeyUpstreamModeOptions = computed(() => [
+  { value: 'auto', label: t('admin.accounts.openai.apiKeyUpstreamModeAuto') },
+  { value: 'responses', label: t('admin.accounts.openai.apiKeyUpstreamModeResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.apiKeyUpstreamModeChatCompletions') }
 ])
 const openAIWSModeConcurrencyHintKey = computed(() =>
   resolveOpenAIWSModeConcurrencyHintKey(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -1483,6 +1533,11 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     )
   }
 
+  if (enableOpenAIAPIKeyUpstreamMode.value) {
+    const extra = ensureExtra()
+    extra.openai_apikey_upstream_mode = openaiAPIKeyUpstreamMode.value
+  }
+
   if (enableOpenAIAPIKeyWSMode.value) {
     const extra = ensureExtra()
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
@@ -1600,6 +1655,7 @@ const handleSubmit = async () => {
     enableStatus.value ||
     enableGroups.value ||
     enableOpenAIWSMode.value ||
+    enableOpenAIAPIKeyUpstreamMode.value ||
     enableOpenAIAPIKeyWSMode.value ||
     enableCodexCLIOnly.value ||
     enableOpenAICompactMode.value ||
@@ -1702,6 +1758,7 @@ watch(
       enableGroups.value = false
       enableOpenAIPassthrough.value = false
       enableOpenAIWSMode.value = false
+      enableOpenAIAPIKeyUpstreamMode.value = false
       enableOpenAIAPIKeyWSMode.value = false
       enableCodexCLIOnly.value = false
       enableOpenAICompactMode.value = false
@@ -1725,6 +1782,7 @@ watch(
       status.value = 'active'
       groupIds.value = []
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+      openaiAPIKeyUpstreamMode.value = 'auto'
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
       openAICompactMode.value = 'auto'
