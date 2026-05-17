@@ -17,6 +17,11 @@
 //     pensieve/short-term/maxims/preserve-existing-runtime-behavior-when-replacing-logic-in-stateful-systems）
 package openai_compat
 
+import (
+	"net/url"
+	"strings"
+)
+
 // AccountResponsesSupport 描述账号上游对 OpenAI Responses API 的支持状态。
 //
 // 仅用于 platform=openai + type=apikey 的账号；其他账号类型不应调用本包判定。
@@ -35,9 +40,19 @@ const (
 	ResponsesSupportNo
 )
 
-// ExtraKeyResponsesSupported 是 accounts.extra JSON 中存储探测结果的键名。
-// 值类型为 bool：true=支持、false=不支持、键缺失=未探测。
-const ExtraKeyResponsesSupported = "openai_responses_supported"
+const (
+	// ExtraKeyResponsesSupported 是 accounts.extra JSON 中存储探测结果的键名。
+	// 值类型为 bool：true=支持、false=不支持、键缺失=未探测。
+	ExtraKeyResponsesSupported = "openai_responses_supported"
+
+	// ExtraKeyAPIKeyUpstreamMode 是 accounts.extra JSON 中存储 OpenAI APIKey
+	// 上游接口模式的键名。该用户显式配置优先于自动探测结果。
+	ExtraKeyAPIKeyUpstreamMode = "openai_apikey_upstream_mode"
+
+	APIKeyUpstreamModeAuto            = "auto"
+	APIKeyUpstreamModeResponses       = "responses"
+	APIKeyUpstreamModeChatCompletions = "chat_completions"
+)
 
 // ResolveResponsesSupport 从账号的 extra map 中读取探测标记。
 //
@@ -72,4 +87,68 @@ func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 // （详见 internal/service/openai_gateway_chat_completions_raw.go）。
 func ShouldUseResponsesAPI(extra map[string]any) bool {
 	return ResolveResponsesSupport(extra) != ResponsesSupportNo
+}
+
+// ResolveAPIKeyUpstreamMode 从账号 extra map 中读取用户配置的 OpenAI APIKey
+// 上游接口模式。缺失或非法值按 auto 处理。
+func ResolveAPIKeyUpstreamMode(extra map[string]any) string {
+	if extra == nil {
+		return APIKeyUpstreamModeAuto
+	}
+	mode, ok := extra[ExtraKeyAPIKeyUpstreamMode].(string)
+	if !ok {
+		return APIKeyUpstreamModeAuto
+	}
+	switch mode {
+	case APIKeyUpstreamModeResponses, APIKeyUpstreamModeChatCompletions:
+		return mode
+	default:
+		return APIKeyUpstreamModeAuto
+	}
+}
+
+// ShouldUseResponsesAPIForBaseURL 判断 OpenAI APIKey 账号的入站
+// /v1/chat/completions 请求是否应走 Responses 路径。
+//
+// 与 ShouldUseResponsesAPI 的区别：未探测账号会结合显式 base_url 判定。
+//   - 未配置 base_url：视为官方 OpenAI 默认上游，继续走 Responses，保持旧行为
+//   - 显式配置 api.openai.com：继续走 Responses
+//   - 显式配置第三方兼容上游：先走 /v1/chat/completions 直转，避免异步探测
+//     写回前的首请求打到不存在的 /v1/responses
+//
+// 用户显式选择 responses/chat_completions 时优先于探测标记；auto 模式才使用
+// 探测结果与 base_url 自动判断。
+func ShouldUseResponsesAPIForBaseURL(extra map[string]any, baseURL string) bool {
+	switch ResolveAPIKeyUpstreamMode(extra) {
+	case APIKeyUpstreamModeResponses:
+		return true
+	case APIKeyUpstreamModeChatCompletions:
+		return false
+	}
+
+	switch ResolveResponsesSupport(extra) {
+	case ResponsesSupportYes:
+		return true
+	case ResponsesSupportNo:
+		return false
+	default:
+		return isOfficialOpenAIBaseURL(baseURL)
+	}
+}
+
+func isOfficialOpenAIBaseURL(baseURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		parsed, err = url.Parse("https://" + baseURL)
+		if err != nil {
+			return false
+		}
+	}
+
+	return strings.EqualFold(parsed.Hostname(), "api.openai.com")
 }
