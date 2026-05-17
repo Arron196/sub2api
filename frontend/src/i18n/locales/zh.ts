@@ -3299,6 +3299,12 @@ export default {
         apiKeyResponsesWebsocketsV2: 'API Key WebSocket Mode',
         apiKeyResponsesWebsocketsV2Desc:
           '仅对 OpenAI API Key 生效。开启后该账号才允许使用 OpenAI WebSocket Mode 协议。',
+        apiKeyUpstreamMode: '上游接口模式',
+        apiKeyUpstreamModeDesc:
+          '控制 OpenAI API Key 账号转发 /v1/chat/completions 时使用的上游接口。自动探测会根据 Responses 探测结果和 Base URL 选择。',
+        apiKeyUpstreamModeAuto: '自动探测',
+        apiKeyUpstreamModeResponses: 'Responses API',
+        apiKeyUpstreamModeChatCompletions: 'Chat Completions',
         responsesWebsocketsV2PassthroughHint: '当前已开启自动透传：仅影响 HTTP 透传链路，不影响 WS mode。',
         codexCLIOnly: '仅允许 Codex 官方客户端',
         codexCLIOnlyDesc: '仅对 OpenAI OAuth 生效。开启后仅允许 Codex 官方客户端家族访问；关闭后完全绕过并保持原逻辑。',

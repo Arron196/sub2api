@@ -3152,6 +3152,12 @@ export default {
         apiKeyResponsesWebsocketsV2: 'API Key WebSocket Mode',
         apiKeyResponsesWebsocketsV2Desc:
           'Only applies to OpenAI API Key. This account can use OpenAI WebSocket Mode only when enabled.',
+        apiKeyUpstreamMode: 'Upstream API mode',
+        apiKeyUpstreamModeDesc:
+          'Controls which upstream endpoint OpenAI API Key accounts use for /v1/chat/completions. Auto uses the Responses probe result and Base URL.',
+        apiKeyUpstreamModeAuto: 'Auto detect',
+        apiKeyUpstreamModeResponses: 'Responses API',
+        apiKeyUpstreamModeChatCompletions: 'Chat Completions',
         responsesWebsocketsV2PassthroughHint:
           'Automatic passthrough is currently enabled: it only affects HTTP passthrough and does not disable WS mode.',
         codexCLIOnly: 'Codex official clients only',
