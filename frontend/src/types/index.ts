@@ -970,6 +970,7 @@ export interface CodexUsageSnapshot {
 }
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
+export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
 
 export type OpenAIAPIKeyUpstreamMode = 'auto' | 'responses' | 'chat_completions'
 
@@ -979,6 +980,11 @@ export interface OpenAICompactState {
   openai_compact_checked_at?: string
   openai_compact_last_status?: number
   openai_compact_last_error?: string
+}
+
+export interface OpenAIResponsesState {
+  openai_responses_mode?: OpenAIResponsesMode
+  openai_responses_supported?: boolean
 }
 
 export interface CreateAccountRequest {
@@ -1156,6 +1162,8 @@ export interface CodexSessionImportResult {
 
 export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2'
+export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
+export type ImageSizeBreakdown = Record<string, number>
 
 export interface UsageLog {
   id: number
@@ -1197,6 +1205,10 @@ export interface UsageLog {
   // 图片生成字段
   image_count: number
   image_size: string | null
+  image_input_size: string | null
+  image_output_size: string | null
+  image_size_source: ImageSizeSource | null
+  image_size_breakdown: ImageSizeBreakdown | null
 
   // User-Agent
   user_agent: string | null
@@ -1482,6 +1494,7 @@ export interface UserSubscription {
   user_id: number
   group_id: number
   status: 'active' | 'expired' | 'revoked'
+  starts_at: string
   daily_usage_usd: number
   weekly_usage_usd: number
   monthly_usage_usd: number

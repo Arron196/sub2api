@@ -48,12 +48,13 @@ var cursorResponsesUnsupportedFields = []string{
 // 正确的，但 sub2api 接入 DeepSeek/Kimi/GLM 等第三方 OpenAI 兼容上游后假设破裂：
 // 这些上游普遍只支持 /v1/chat/completions，无 /v1/responses 端点。
 //
-// 当前路由策略（基于账号探测标记和 base_url，详见
+// 当前路由策略（基于 APIKey 上游模式、Responses 覆盖模式与探测标记，详见
 // openai_compat.ShouldUseResponsesAPIForBaseURL）：
-//   - APIKey 账号 + 探测确认不支持 Responses，或显式第三方 base_url 尚未探测
-//     → 走 forwardAsRawChatCompletions 直转上游 /v1/chat/completions，不做协议转换
-//   - 其他所有情况（OAuth、官方 OpenAI APIKey、探测确认支持）→ 走原有
-//     CC→Responses 转换路径
+//   - APIKey 账号 + 显式/强制/探测确认不支持 Responses → 走
+//     forwardAsRawChatCompletions 直转上游 /v1/chat/completions，不做协议转换
+//   - 其他所有情况（OAuth、APIKey 显式/强制/探测确认支持、未探测）→ 走原有
+//     CC→Responses 转换路径；未探测的第三方自定义 base_url 也先走 /v1/responses，
+//     若上游不支持则使用下方错误回退
 func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	ctx context.Context,
 	c *gin.Context,
@@ -62,7 +63,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	// 入口分流：APIKey 账号 + 上游不应走 Responses，走 CC 直转。
+	// 入口分流：APIKey 账号 + 显式/强制/已探测确认上游不支持 Responses，走 CC 直转。
+	// 自动模式下标记缺失（未探测）按"现状即证据"原则继续走下方原 Responses 转换路径。
 	if account.IsOpenAIApiKey() && !openai_compat.ShouldUseResponsesAPIForBaseURL(account.Extra, account.GetCredential("base_url")) {
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
@@ -247,6 +249,16 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		if account.Type == AccountTypeAPIKey &&
+			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
+			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
+			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
+				zap.Int64("account_id", account.ID),
+				zap.Int("upstream_status", resp.StatusCode),
+				zap.String("upstream_message", upstreamMsg),
+			)
+			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+		}
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {

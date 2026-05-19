@@ -143,6 +143,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 				return
 			} else {
@@ -155,6 +156,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		if selection == nil || selection.Account == nil {
+			markOpsRoutingCapacityLimited(c)
 			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
 			return
 		}
@@ -292,8 +294,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 // resolveRawCCUpstreamEndpoint returns the actual upstream endpoint for
 // OpenAI Chat Completions requests. For APIKey accounts whose upstream
-// should not use the Responses API, the request is forwarded directly to
-// /v1/chat/completions — not through the default CC→Responses conversion path.
+// is explicitly configured, forced, or probed to not support the Responses API,
+// the request is forwarded directly to /v1/chat/completions — not through the
+// default CC→Responses conversion path. Unknown auto-mode accounts still report
+// the Responses endpoint first because the gateway will fall back on unsupported
+// /v1/responses errors.
 func resolveRawCCUpstreamEndpoint(c *gin.Context, account *service.Account) string {
 	if account != nil && account.IsOpenAIApiKey() &&
 		!openai_compat.ShouldUseResponsesAPIForBaseURL(account.Extra, account.GetCredential("base_url")) {

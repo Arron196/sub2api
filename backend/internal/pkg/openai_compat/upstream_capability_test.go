@@ -16,6 +16,12 @@ func TestResolveResponsesSupport(t *testing.T) {
 		{"value wrong type string", map[string]any{ExtraKeyResponsesSupported: "true"}, ResponsesSupportUnknown},
 		{"value wrong type number", map[string]any{ExtraKeyResponsesSupported: 1}, ResponsesSupportUnknown},
 		{"value nil", map[string]any{ExtraKeyResponsesSupported: nil}, ResponsesSupportUnknown},
+		{"force responses", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses)}, ResponsesSupportYes},
+		{"force chat completions", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions)}, ResponsesSupportNo},
+		{"auto follows probe", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeAuto), ExtraKeyResponsesSupported: false}, ResponsesSupportNo},
+		{"invalid mode follows probe", map[string]any{ExtraKeyResponsesMode: "bogus", ExtraKeyResponsesSupported: true}, ResponsesSupportYes},
+		{"force responses overrides probe false", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, ResponsesSupportYes},
+		{"force chat completions overrides probe true", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, ResponsesSupportNo},
 	}
 
 	for _, tc := range tests {
@@ -42,6 +48,16 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		// 已探测：标记决定
 		{"explicitly supported", map[string]any{ExtraKeyResponsesSupported: true}, true},
 		{"explicitly unsupported", map[string]any{ExtraKeyResponsesSupported: false}, false},
+
+		// 手动覆盖：覆盖自动探测结果
+		{"force responses overrides unsupported probe", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, true},
+		{"force chat completions overrides supported probe", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, false},
+
+		// OpenAI APIKey 上游模式：优先级高于兼容覆盖模式与自动探测结果
+		{"api key responses overrides unsupported probe", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeResponses, ExtraKeyResponsesSupported: false}, true},
+		{"api key chat completions overrides supported probe", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeChatCompletions, ExtraKeyResponsesSupported: true}, false},
+		{"api key responses overrides force chat completions", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeResponses, ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions)}, true},
+		{"api key chat completions overrides force responses", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeChatCompletions, ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses)}, false},
 	}
 
 	for _, tc := range tests {
@@ -79,6 +95,29 @@ func TestResolveAPIKeyUpstreamMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeResponsesSupportMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		want ResponsesSupportMode
+	}{
+		{"empty", "", ResponsesSupportModeAuto},
+		{"auto", "auto", ResponsesSupportModeAuto},
+		{"force responses", "force_responses", ResponsesSupportModeForceResponses},
+		{"force chat completions", "force_chat_completions", ResponsesSupportModeForceChatCompletions},
+		{"invalid", "enabled", ResponsesSupportModeAuto},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeResponsesSupportMode(tc.mode)
+			if got != tc.want {
+				t.Errorf("NormalizeResponsesSupportMode(%q) = %q, want %q", tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShouldUseResponsesAPIForBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -89,7 +128,10 @@ func TestShouldUseResponsesAPIForBaseURL(t *testing.T) {
 		{"forced responses overrides unsupported probe and custom base URL", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeResponses, ExtraKeyResponsesSupported: false}, "https://api.deepseek.com", true},
 		{"forced chat completions overrides supported probe and official base URL", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeChatCompletions, ExtraKeyResponsesSupported: true}, "https://api.openai.com", false},
 		{"auto mode follows unsupported probe", map[string]any{ExtraKeyAPIKeyUpstreamMode: APIKeyUpstreamModeAuto, ExtraKeyResponsesSupported: false}, "https://api.openai.com", false},
-		{"invalid mode falls back to auto base URL behavior", map[string]any{ExtraKeyAPIKeyUpstreamMode: "legacy"}, "https://api.deepseek.com", false},
+		{"invalid mode falls back to auto and unknown custom base URL prefers responses", map[string]any{ExtraKeyAPIKeyUpstreamMode: "legacy"}, "https://api.deepseek.com", true},
+
+		{"responses mode force responses overrides custom base URL", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceResponses), ExtraKeyResponsesSupported: false}, "https://api.deepseek.com", true},
+		{"responses mode force chat completions overrides official base URL", map[string]any{ExtraKeyResponsesMode: string(ResponsesSupportModeForceChatCompletions), ExtraKeyResponsesSupported: true}, "https://api.openai.com", false},
 
 		{"explicitly supported ignores custom base URL", map[string]any{ExtraKeyResponsesSupported: true}, "https://api.deepseek.com", true},
 		{"explicitly unsupported ignores official base URL", map[string]any{ExtraKeyResponsesSupported: false}, "https://api.openai.com", false},
@@ -102,10 +144,10 @@ func TestShouldUseResponsesAPIForBaseURL(t *testing.T) {
 		{"unknown official no scheme", nil, "api.openai.com", true},
 		{"unknown official mixed case and port", nil, "HTTPS://API.OPENAI.COM:443/v1", true},
 
-		{"unknown third party bare domain uses raw chat completions", nil, "https://api.deepseek.com", false},
-		{"unknown third party path prefix uses raw chat completions", nil, "https://api.gptgod.online/api", false},
-		{"unknown third party no scheme uses raw chat completions", nil, "api.deepseek.com", false},
-		{"unknown malformed explicit base URL uses raw chat completions", nil, "://bad", false},
+		{"unknown third party bare domain prefers responses first", nil, "https://api.deepseek.com", true},
+		{"unknown third party path prefix prefers responses first", nil, "https://api.gptgod.online/api", true},
+		{"unknown third party no scheme prefers responses first", nil, "api.deepseek.com", true},
+		{"unknown malformed explicit base URL prefers responses first", nil, "://bad", true},
 	}
 
 	for _, tc := range tests {
