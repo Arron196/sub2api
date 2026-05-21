@@ -21,7 +21,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
-	"github.com/redis/go-redis/v9"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
@@ -101,12 +100,17 @@ type SystemDebugOpsCountersProvider interface {
 	SanitizedTotal() int64
 }
 
+type SystemDebugRedisProbe interface {
+	PoolStats() SystemDebugExportRedisPoolStats
+	Ping(ctx context.Context) error
+}
+
 type SystemDebugExportService struct {
 	cfg         *config.Config
 	entClient   *ent.Client
 	opsRepo     OpsRepository
 	db          *sql.DB
-	redisClient *redis.Client
+	redisProbe  SystemDebugRedisProbe
 	buildInfo   BuildInfo
 	opsCounters SystemDebugOpsCountersProvider
 	now         func() time.Time
@@ -582,13 +586,13 @@ type SystemDebugExportAccountSchedulingSample struct {
 	TempUnschedulableReason string     `json:"temp_unschedulable_reason,omitempty"`
 }
 
-func NewSystemDebugExportService(cfg *config.Config, entClient *ent.Client, opsRepo OpsRepository, db *sql.DB, redisClient *redis.Client, buildInfo BuildInfo, opsCounters SystemDebugOpsCountersProvider) *SystemDebugExportService {
+func NewSystemDebugExportService(cfg *config.Config, entClient *ent.Client, opsRepo OpsRepository, db *sql.DB, redisProbe SystemDebugRedisProbe, buildInfo BuildInfo, opsCounters SystemDebugOpsCountersProvider) *SystemDebugExportService {
 	return &SystemDebugExportService{
 		cfg:         cfg,
 		entClient:   entClient,
 		opsRepo:     opsRepo,
 		db:          db,
-		redisClient: redisClient,
+		redisProbe:  redisProbe,
 		buildInfo:   buildInfo,
 		opsCounters: opsCounters,
 		now:         time.Now,
@@ -855,25 +859,16 @@ func (s *SystemDebugExportService) collectDatabaseConditions(ctx context.Context
 
 func (s *SystemDebugExportService) collectRedisConditions(ctx context.Context) SystemDebugExportRedisConditions {
 	result := SystemDebugExportRedisConditions{SystemDebugExportSectionStatus: SystemDebugExportSectionStatus{Status: "ok"}}
-	if s.redisClient == nil {
+	if s.redisProbe == nil {
 		result.Status = "unavailable"
 		result.ErrorKind = "unavailable"
 		return result
 	}
-	if stats := s.redisClient.PoolStats(); stats != nil {
-		result.Pool = SystemDebugExportRedisPoolStats{
-			Total:    int64(stats.TotalConns),
-			Idle:     int64(stats.IdleConns),
-			Stale:    int64(stats.StaleConns),
-			Hits:     int64(stats.Hits),
-			Misses:   int64(stats.Misses),
-			Timeouts: int64(stats.Timeouts),
-		}
-	}
+	result.Pool = s.redisProbe.PoolStats()
 	probeCtx, cancel := context.WithTimeout(ctx, systemDebugExportProbeTimeout)
 	defer cancel()
 	start := time.Now()
-	if err := s.redisClient.Ping(probeCtx).Err(); err != nil {
+	if err := s.redisProbe.Ping(probeCtx); err != nil {
 		result.Status = "unavailable"
 		result.ErrorKind = systemDebugErrorKind(err)
 		return result
@@ -1875,7 +1870,7 @@ func systemDebugErrorKind(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "canceled"
 	}
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, redis.Nil) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, sql.ErrNoRows) {
 		return "not_found"
 	}
 	if errors.Is(err, os.ErrPermission) {
@@ -1896,7 +1891,7 @@ func systemDebugErrorKind(err error) string {
 		return "canceled"
 	case strings.Contains(message, "permission denied") || strings.Contains(message, "access is denied"):
 		return "permission_denied"
-	case strings.Contains(message, "not found") || strings.Contains(message, "no such file") || strings.Contains(message, "no rows"):
+	case strings.Contains(message, "not found") || strings.Contains(message, "no such file") || strings.Contains(message, "no rows") || strings.Contains(message, "redis: nil"):
 		return "not_found"
 	case strings.Contains(message, "connection refused") || strings.Contains(message, "connection reset") || strings.Contains(message, "no route") || strings.Contains(message, "network is unreachable") || strings.Contains(message, "dial"):
 		return "connection_failed"
@@ -1931,17 +1926,6 @@ func truncateSystemDebugExportText(input string, limit int) string {
 		return input
 	}
 	return string(runes[:limit])
-}
-
-func systemDebugExportCountsFromMap(values map[string]int) []SystemDebugExportAccountSchedulingCount {
-	counts := make([]SystemDebugExportAccountSchedulingCount, 0, len(values))
-	for value, count := range values {
-		counts = append(counts, SystemDebugExportAccountSchedulingCount{Value: value, Count: count})
-	}
-	sort.Slice(counts, func(i, j int) bool {
-		return counts[i].Value < counts[j].Value
-	})
-	return counts
 }
 
 func safeRunMode(cfg *config.Config) string {

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 
@@ -62,6 +63,42 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 	return newSchedulerCacheWithChunkSizes(rdb, mgetChunkSize, writeChunkSize)
 }
 
+type systemDebugRedisProbe struct {
+	client *redis.Client
+}
+
+func ProvideSystemDebugRedisProbe(rdb *redis.Client) service.SystemDebugRedisProbe {
+	if rdb == nil {
+		return nil
+	}
+	return systemDebugRedisProbe{client: rdb}
+}
+
+func (p systemDebugRedisProbe) PoolStats() service.SystemDebugExportRedisPoolStats {
+	if p.client == nil {
+		return service.SystemDebugExportRedisPoolStats{}
+	}
+	stats := p.client.PoolStats()
+	if stats == nil {
+		return service.SystemDebugExportRedisPoolStats{}
+	}
+	return service.SystemDebugExportRedisPoolStats{
+		Total:    int64(stats.TotalConns),
+		Idle:     int64(stats.IdleConns),
+		Stale:    int64(stats.StaleConns),
+		Hits:     int64(stats.Hits),
+		Misses:   int64(stats.Misses),
+		Timeouts: int64(stats.Timeouts),
+	}
+}
+
+func (p systemDebugRedisProbe) Ping(ctx context.Context) error {
+	if p.client == nil {
+		return errors.New("redis client unavailable")
+	}
+	return p.client.Ping(ctx).Err()
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
@@ -105,6 +142,7 @@ var ProviderSet = wire.NewSet(
 	NewInternal500CounterCache,
 	ProvideConcurrencyCache,
 	ProvideSessionLimitCache,
+	ProvideSystemDebugRedisProbe,
 	NewRPMCache,
 	NewUserRPMCache,
 	NewUserMsgQueueCache,
