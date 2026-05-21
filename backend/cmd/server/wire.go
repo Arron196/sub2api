@@ -83,6 +83,7 @@ func provideCleanup(
 	accountExpiry *service.AccountExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
+	debugExportJobs *service.DebugExportJobService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
 	pricing *service.PricingService,
 	emailQueue *service.EmailQueueService,
@@ -155,6 +156,12 @@ func provideCleanup(
 			{"UsageCleanupService", func() error {
 				if usageCleanup != nil {
 					usageCleanup.Stop()
+				}
+				return nil
+			}},
+			{"DebugExportJobService", func() error {
+				if debugExportJobs != nil {
+					debugExportJobs.Stop()
 				}
 				return nil
 			}},

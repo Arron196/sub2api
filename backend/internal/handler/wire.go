@@ -74,9 +74,39 @@ func ProvideAdminHandlers(
 	}
 }
 
+type opsErrorLogCountersProvider struct{}
+
+func ProvideSystemDebugOpsCountersProvider() service.SystemDebugOpsCountersProvider {
+	return opsErrorLogCountersProvider{}
+}
+
+func (opsErrorLogCountersProvider) QueueLength() int64 {
+	return OpsErrorLogQueueLength()
+}
+
+func (opsErrorLogCountersProvider) QueueCapacity() int {
+	return OpsErrorLogQueueCapacity()
+}
+
+func (opsErrorLogCountersProvider) DroppedTotal() int64 {
+	return OpsErrorLogDroppedTotal()
+}
+
+func (opsErrorLogCountersProvider) EnqueuedTotal() int64 {
+	return OpsErrorLogEnqueuedTotal()
+}
+
+func (opsErrorLogCountersProvider) ProcessedTotal() int64 {
+	return OpsErrorLogProcessedTotal()
+}
+
+func (opsErrorLogCountersProvider) SanitizedTotal() int64 {
+	return OpsErrorLogSanitizedTotal()
+}
+
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
-func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
-	return admin.NewSystemHandler(updateService, lockService)
+func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService, debugExportService *service.SystemDebugExportService, debugExportJobService *service.DebugExportJobService) *admin.SystemHandler {
+	return admin.NewSystemHandler(updateService, lockService, debugExportService, debugExportJobService)
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
@@ -149,6 +179,7 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIGatewayHandler,
 	NewTotpHandler,
 	ProvideSettingHandler,
+	ProvideSystemDebugOpsCountersProvider,
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
 	NewAvailableChannelHandler,

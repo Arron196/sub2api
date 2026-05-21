@@ -493,6 +493,8 @@ var ProviderSet = wire.NewSet(
 	ProvideSchedulerSnapshotService,
 	NewIdentityService,
 	NewCRSSyncService,
+	NewSystemDebugExportService,
+	ProvideDebugExportJobService,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
 	ProvideAccountExpiryService,
