@@ -125,7 +125,7 @@ const { t } = useI18n()
 const localProviders = ref<ProviderInstance[]>([])
 
 watch(() => props.providers, (val) => {
-  localProviders.value = [...val]
+  localProviders.value = Array.isArray(val) ? [...val] : []
 }, { immediate: true })
 
 function onDragEnd() {
