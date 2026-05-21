@@ -198,6 +198,288 @@
               </div>
             </div>
           </div>
+
+          <!-- Redacted Debug Export -->
+          <div class="card">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.debugData.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.debugData.description") }}
+              </p>
+            </div>
+            <div class="space-y-4 p-6">
+              <div
+                class="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20"
+              >
+                <div class="flex items-start">
+                  <Icon
+                    name="infoCircle"
+                    size="md"
+                    class="mt-0.5 flex-shrink-0 text-blue-500"
+                  />
+                  <p class="ml-3 text-sm text-blue-700 dark:text-blue-300">
+                    {{ t("admin.settings.debugData.redactionNotice") }}
+                  </p>
+                </div>
+              </div>
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.debugData.safeContents") }}
+              </p>
+              <div class="grid gap-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/50 sm:grid-cols-2">
+                <div>
+                  <label
+                    for="debug-data-detail-level"
+                    class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.debugData.detailLevelLabel") }}
+                  </label>
+                  <select
+                    id="debug-data-detail-level"
+                    v-model="debugDataDetailLevel"
+                    class="input"
+                    data-testid="debug-data-detail-level"
+                  >
+                    <option value="standard">
+                      {{ t("admin.settings.debugData.detailLevels.standard") }}
+                    </option>
+                    <option value="detailed">
+                      {{ t("admin.settings.debugData.detailLevels.detailed") }}
+                    </option>
+                    <option value="support">
+                      {{ t("admin.settings.debugData.detailLevels.support") }}
+                    </option>
+                  </select>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.debugData.detailLevelHint") }}
+                  </p>
+                </div>
+                <div class="flex items-start gap-3">
+                  <Toggle
+                    v-model="debugDataMoreSensitive"
+                    data-testid="debug-data-more-sensitive-toggle"
+                  />
+                  <div>
+                    <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.debugData.moreSensitiveLabel") }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.debugData.moreSensitiveHint") }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800/40">
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label
+                      for="debug-data-log-window"
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.debugData.logWindowLabel") }}
+                    </label>
+                    <select
+                      id="debug-data-log-window"
+                      v-model="debugDataLogWindowPreset"
+                      class="input"
+                      data-testid="debug-data-log-window"
+                    >
+                      <option value="30m">
+                        {{ t("admin.settings.debugData.logWindowPresets.last30Minutes") }}
+                      </option>
+                      <option value="6h">
+                        {{ t("admin.settings.debugData.logWindowPresets.last6Hours") }}
+                      </option>
+                      <option value="1d">
+                        {{ t("admin.settings.debugData.logWindowPresets.last1Day") }}
+                      </option>
+                      <option value="3d">
+                        {{ t("admin.settings.debugData.logWindowPresets.last3Days") }}
+                      </option>
+                      <option value="1w">
+                        {{ t("admin.settings.debugData.logWindowPresets.last1Week") }}
+                      </option>
+                      <option value="custom">
+                        {{ t("admin.settings.debugData.logWindowPresets.custom") }}
+                      </option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.debugData.logWindowHint") }}
+                    </p>
+                  </div>
+                  <div class="rounded-lg bg-gray-50 p-3 text-xs text-gray-500 dark:bg-dark-700/60 dark:text-gray-400">
+                    {{ t("admin.settings.debugData.logWindowPerformanceHint") }}
+                  </div>
+                </div>
+                <div
+                  v-if="debugDataLogWindowPreset === 'custom'"
+                  class="mt-4 grid gap-4 border-t border-gray-200 pt-4 dark:border-dark-700 sm:grid-cols-2"
+                  data-testid="debug-data-custom-log-range"
+                >
+                  <div>
+                    <label
+                      for="debug-data-custom-log-start"
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.debugData.customLogStartLabel") }}
+                    </label>
+                    <input
+                      id="debug-data-custom-log-start"
+                      v-model="debugDataCustomLogStart"
+                      type="datetime-local"
+                      class="input"
+                      data-testid="debug-data-custom-log-start"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      for="debug-data-custom-log-end"
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.debugData.customLogEndLabel") }}
+                    </label>
+                    <input
+                      id="debug-data-custom-log-end"
+                      v-model="debugDataCustomLogEnd"
+                      type="datetime-local"
+                      class="input"
+                      data-testid="debug-data-custom-log-end"
+                    />
+                  </div>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">
+                    {{ t("admin.settings.debugData.customLogRangeHint") }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  :disabled="debugDataJobsLoading"
+                  data-testid="debug-data-refresh-jobs-button"
+                  @click="() => loadDebugExportJobs()"
+                >
+                  {{ t("admin.settings.debugData.refreshJobs") }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm flex-shrink-0"
+                  :disabled="debugDataExporting"
+                  data-testid="debug-data-export-button"
+                  @click="exportDebugData"
+                >
+                  <svg
+                    v-if="debugDataExporting"
+                    class="mr-1 h-4 w-4 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  {{
+                    debugDataExporting
+                      ? t("admin.settings.debugData.exporting")
+                      : t("admin.settings.debugData.export")
+                  }}
+                </button>
+              </div>
+              <div class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800/40">
+                <div class="mb-3 flex items-center justify-between">
+                  <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.debugData.jobsTitle") }}
+                  </h3>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.debugData.jobsRetainHint") }}
+                  </span>
+                </div>
+                <div
+                  v-if="debugDataJobsLoading"
+                  class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"
+                  data-testid="debug-data-jobs-loading"
+                >
+                  <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
+                  {{ t("common.loading") }}
+                </div>
+                <div
+                  v-else-if="debugDataJobs.length === 0"
+                  class="text-sm text-gray-500 dark:text-gray-400"
+                  data-testid="debug-data-jobs-empty"
+                >
+                  {{ t("admin.settings.debugData.noJobs") }}
+                </div>
+                <div v-else class="space-y-3" data-testid="debug-data-jobs-list">
+                  <div
+                    v-for="job in debugDataJobs"
+                    :key="job.id"
+                    class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
+                    :data-testid="`debug-data-job-${job.id}`"
+                  >
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="font-mono text-sm text-gray-700 dark:text-gray-200">#{{ job.id }}</span>
+                          <span :class="debugJobStatusClass(job.status)">
+                            {{ formatDebugJobStatus(job.status) }}
+                          </span>
+                          <span class="text-xs text-gray-500 dark:text-gray-400">
+                            {{ job.phase || t("admin.settings.debugData.phaseUnknown") }}
+                          </span>
+                        </div>
+                        <div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                          <div
+                            class="h-full rounded-full bg-primary-600 transition-all"
+                            :style="{ width: `${clampDebugJobProgress(job.progress_percent)}%` }"
+                          ></div>
+                        </div>
+                        <div class="mt-2 grid gap-1 text-xs text-gray-500 dark:text-gray-400 sm:grid-cols-2">
+                          <span>{{ t("admin.settings.debugData.jobBytes", { bytes: formatDebugBytes(job.bytes_written || job.file_size || 0) }) }}</span>
+                          <span v-if="job.expires_at">{{ t("admin.settings.debugData.jobExpires", { time: formatDebugJobDate(job.expires_at) }) }}</span>
+                          <span v-if="job.file_name" class="truncate sm:col-span-2">{{ job.file_name }}</span>
+                          <span v-if="job.error_message" class="text-red-600 dark:text-red-400 sm:col-span-2">{{ job.error_message }}</span>
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap gap-2">
+                        <button
+                          v-if="canCancelDebugJob(job.status)"
+                          type="button"
+                          class="btn btn-secondary btn-xs"
+                          :disabled="debugDataCancelingJobId === job.id"
+                          :data-testid="`debug-data-job-cancel-${job.id}`"
+                          @click="cancelDebugExportJob(job.id)"
+                        >
+                          {{ t("admin.settings.debugData.cancelJob") }}
+                        </button>
+                        <button
+                          v-if="job.status === 'succeeded'"
+                          type="button"
+                          class="btn btn-primary btn-xs"
+                          :data-testid="`debug-data-job-download-${job.id}`"
+                          @click="downloadDebugExportJob(job)"
+                        >
+                          {{ t("admin.settings.debugData.downloadJob") }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <!-- /Tab: Security — Admin API Key -->
 
@@ -6500,9 +6782,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
+import type { DebugExportJob, DebugExportJobStatus, SystemDebugExportOptions } from "@/api/admin/system";
 import {
   appendAuthSourceDefaultsToUpdateRequest,
   buildAuthSourceDefaultsState,
@@ -6669,6 +6952,16 @@ const adminApiKeyExists = ref(false);
 const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
+const debugDataExporting = ref(false);
+const debugDataDetailLevel = ref<"standard" | "detailed" | "support">("support");
+const debugDataMoreSensitive = ref(false);
+const debugDataLogWindowPreset = ref<"30m" | "6h" | "1d" | "3d" | "1w" | "custom">("1d");
+const debugDataCustomLogStart = ref("");
+const debugDataCustomLogEnd = ref("");
+const debugDataJobs = ref<DebugExportJob[]>([]);
+const debugDataJobsLoading = ref(false);
+const debugDataCancelingJobId = ref<number | null>(null);
+let debugDataJobsPollTimer: ReturnType<typeof setInterval> | null = null;
 const subscriptionGroups = ref<AdminGroup[]>([]);
 
 // Overload Cooldown (529) 状态
@@ -8387,6 +8680,182 @@ function copyNewKey() {
     });
 }
 
+function buildDebugExportOptions(): SystemDebugExportOptions | null {
+  const options: SystemDebugExportOptions = {
+    detail_level: debugDataDetailLevel.value,
+    sensitive_handling: debugDataMoreSensitive.value ? "diagnostic" : "masked",
+    log_window_preset: debugDataLogWindowPreset.value,
+  };
+  if (debugDataLogWindowPreset.value !== "custom") {
+    return options;
+  }
+
+  const start = new Date(debugDataCustomLogStart.value);
+  const end = new Date(debugDataCustomLogEnd.value);
+  if (
+    !debugDataCustomLogStart.value ||
+    !debugDataCustomLogEnd.value ||
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    start >= end
+  ) {
+    appStore.showError(t("admin.settings.debugData.customLogRangeInvalid"));
+    return null;
+  }
+  options.custom_log_start = start.toISOString();
+  options.custom_log_end = end.toISOString();
+  return options;
+}
+
+const activeDebugJobStatuses: DebugExportJobStatus[] = ["pending", "running"];
+
+function hasActiveDebugExportJobs(jobs: DebugExportJob[]): boolean {
+  return jobs.some((job) => activeDebugJobStatuses.includes(job.status));
+}
+
+function startDebugExportJobPolling(): void {
+  if (debugDataJobsPollTimer !== null) return;
+  debugDataJobsPollTimer = setInterval(() => {
+    void loadDebugExportJobs({ silent: true });
+  }, 3000);
+}
+
+function stopDebugExportJobPolling(): void {
+  if (debugDataJobsPollTimer === null) return;
+  clearInterval(debugDataJobsPollTimer);
+  debugDataJobsPollTimer = null;
+}
+
+function updateDebugExportJobPolling(): void {
+  if (hasActiveDebugExportJobs(debugDataJobs.value)) {
+    startDebugExportJobPolling();
+  } else {
+    stopDebugExportJobPolling();
+  }
+}
+
+async function loadDebugExportJobs(options: { silent?: boolean } = {}): Promise<void> {
+  if (!options.silent) {
+    debugDataJobsLoading.value = true;
+  }
+  try {
+    const result = await adminAPI.system.listDebugExportJobs();
+    debugDataJobs.value = result.items;
+    updateDebugExportJobPolling();
+  } catch (error: unknown) {
+    if (!options.silent) {
+      appStore.showError(
+        extractApiErrorMessage(error, t("admin.settings.debugData.loadJobsFailed")),
+      );
+    }
+  } finally {
+    if (!options.silent) {
+      debugDataJobsLoading.value = false;
+    }
+  }
+}
+
+function replaceDebugExportJob(updated: DebugExportJob): void {
+  const index = debugDataJobs.value.findIndex((job) => job.id === updated.id);
+  if (index >= 0) {
+    debugDataJobs.value.splice(index, 1, updated);
+  } else {
+    debugDataJobs.value.unshift(updated);
+  }
+  updateDebugExportJobPolling();
+}
+
+async function exportDebugData() {
+  if (debugDataExporting.value) return;
+  const exportOptions = buildDebugExportOptions();
+  if (!exportOptions) return;
+  debugDataExporting.value = true;
+  try {
+    const job = await adminAPI.system.createDebugExportJob(exportOptions);
+    replaceDebugExportJob(job);
+    appStore.showSuccess(t("admin.settings.debugData.jobCreated"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.debugData.exportFailed")),
+    );
+  } finally {
+    debugDataExporting.value = false;
+  }
+}
+
+async function cancelDebugExportJob(jobId: number): Promise<void> {
+  if (debugDataCancelingJobId.value !== null) return;
+  debugDataCancelingJobId.value = jobId;
+  try {
+    const job = await adminAPI.system.cancelDebugExportJob(jobId);
+    replaceDebugExportJob(job);
+    appStore.showSuccess(t("admin.settings.debugData.cancelSuccess"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.debugData.cancelFailed")),
+    );
+  } finally {
+    debugDataCancelingJobId.value = null;
+  }
+}
+
+async function downloadDebugExportJob(job: DebugExportJob): Promise<void> {
+  if (job.status !== "succeeded") return;
+  try {
+    const blob = await adminAPI.system.downloadDebugExportJobArtifact(job.id);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = job.file_name || "sub2api-debug-export.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    appStore.showSuccess(t("admin.settings.debugData.exportSuccess"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.debugData.exportFailed")),
+    );
+  }
+}
+
+function canCancelDebugJob(status: DebugExportJobStatus): boolean {
+  return status === "pending" || status === "running";
+}
+
+function clampDebugJobProgress(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function formatDebugBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatDebugJobDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatDebugJobStatus(status: DebugExportJobStatus): string {
+  return t(`admin.settings.debugData.jobStatuses.${status}`);
+}
+
+function debugJobStatusClass(status: DebugExportJobStatus): string {
+  const base = "rounded-full px-2 py-0.5 text-xs font-medium";
+  if (status === "succeeded") return `${base} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300`;
+  if (status === "failed") return `${base} bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300`;
+  if (status === "canceled" || status === "expired") return `${base} bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300`;
+  return `${base} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300`;
+}
+
 // Overload Cooldown 方法
 async function loadOverloadCooldownSettings() {
   overloadCooldownLoading.value = true;
@@ -9073,6 +9542,11 @@ onMounted(() => {
   loadRectifierSettings();
   loadBetaPolicySettings();
   loadProviders();
+  loadDebugExportJobs();
+});
+
+onBeforeUnmount(() => {
+  stopDebugExportJobPolling();
 });
 
 // =========================

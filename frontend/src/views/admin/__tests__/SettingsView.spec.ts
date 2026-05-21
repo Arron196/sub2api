@@ -24,6 +24,11 @@ const {
   deleteProvider,
   fetchPublicSettings,
   adminSettingsFetch,
+  exportDebugData,
+  createDebugExportJob,
+  listDebugExportJobs,
+  cancelDebugExportJob,
+  downloadDebugExportJobArtifact,
   showError,
   showSuccess,
 } = vi.hoisted(() => ({
@@ -46,11 +51,37 @@ const {
   deleteProvider: vi.fn(),
   fetchPublicSettings: vi.fn(),
   adminSettingsFetch: vi.fn(),
+  exportDebugData: vi.fn(),
+  createDebugExportJob: vi.fn(),
+  listDebugExportJobs: vi.fn(),
+  cancelDebugExportJob: vi.fn(),
+  downloadDebugExportJobArtifact: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }));
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
+
+vi.hoisted(() => {
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    },
+  });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:test",
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: () => undefined,
+  });
+});
 
 vi.mock("@/api", () => ({
   adminAPI: {
@@ -78,6 +109,13 @@ vi.mock("@/api", () => ({
       updateProvider,
       createProvider,
       deleteProvider,
+    },
+    system: {
+      exportDebugData,
+      createDebugExportJob,
+      listDebugExportJobs,
+      cancelDebugExportJob,
+      downloadDebugExportJobArtifact,
     },
   },
 }));
@@ -163,6 +201,49 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
+    "admin.settings.debugData.export": "下载调试包",
+    "admin.settings.debugData.exporting": "准备中...",
+    "admin.settings.debugData.exportSuccess": "调试包已下载",
+    "admin.settings.debugData.exportFailed": "导出调试包失败",
+    "admin.settings.debugData.jobCreated": "调试导出任务已创建",
+    "admin.settings.debugData.jobsTitle": "最近的调试导出任务",
+    "admin.settings.debugData.jobsRetainHint": "文件会在 24 小时后过期。",
+    "admin.settings.debugData.refreshJobs": "刷新任务",
+    "admin.settings.debugData.noJobs": "暂无调试导出任务。",
+    "admin.settings.debugData.loadJobsFailed": "加载调试导出任务失败",
+    "admin.settings.debugData.cancelJob": "取消",
+    "admin.settings.debugData.cancelSuccess": "调试导出任务已取消",
+    "admin.settings.debugData.cancelFailed": "取消调试导出任务失败",
+    "admin.settings.debugData.downloadJob": "下载",
+    "admin.settings.debugData.phaseUnknown": "等待中",
+    "admin.settings.debugData.jobBytes": "已写入 {bytes}",
+    "admin.settings.debugData.jobExpires": "{time} 过期",
+    "admin.settings.debugData.jobStatuses.pending": "等待中",
+    "admin.settings.debugData.jobStatuses.running": "运行中",
+    "admin.settings.debugData.jobStatuses.succeeded": "可下载",
+    "admin.settings.debugData.jobStatuses.failed": "失败",
+    "admin.settings.debugData.jobStatuses.canceled": "已取消",
+    "admin.settings.debugData.jobStatuses.expired": "已过期",
+    "admin.settings.debugData.detailLevelLabel": "导出详细程度",
+    "admin.settings.debugData.detailLevelHint": "支持模式会扩大安全日志归因窗口。",
+    "admin.settings.debugData.detailLevels.standard": "标准",
+    "admin.settings.debugData.detailLevels.detailed": "详细",
+    "admin.settings.debugData.detailLevels.support": "支持排障 / 最详细",
+    "admin.settings.debugData.moreSensitiveLabel": "更多敏感数据导出",
+        "admin.settings.debugData.moreSensitiveHint": "会额外导出敏感项的是否配置、长度区间和格式提示。",
+    "admin.settings.debugData.logWindowLabel": "导出日志时间范围",
+    "admin.settings.debugData.logWindowHint": "只采样所选时间范围内的索引日志归因信息。",
+    "admin.settings.debugData.logWindowPerformanceHint": "后端使用时间索引 + LIMIT 采样，不做全量 COUNT。",
+    "admin.settings.debugData.logWindowPresets.last30Minutes": "最近半小时",
+    "admin.settings.debugData.logWindowPresets.last6Hours": "最近 6 小时",
+    "admin.settings.debugData.logWindowPresets.last1Day": "最近一天",
+    "admin.settings.debugData.logWindowPresets.last3Days": "最近三天",
+    "admin.settings.debugData.logWindowPresets.last1Week": "最近一周",
+    "admin.settings.debugData.logWindowPresets.custom": "自定义时间范围",
+    "admin.settings.debugData.customLogStartLabel": "开始时间",
+    "admin.settings.debugData.customLogEndLabel": "结束时间",
+    "admin.settings.debugData.customLogRangeHint": "自定义范围最长 7 天。",
+    "admin.settings.debugData.customLogRangeInvalid": "请选择有效的日志开始和结束时间。",
   };
   return {
     ...actual,
@@ -476,6 +557,11 @@ describe("admin SettingsView payment visible method controls", () => {
     deleteProvider.mockReset();
     fetchPublicSettings.mockReset();
     adminSettingsFetch.mockReset();
+    exportDebugData.mockReset();
+    createDebugExportJob.mockReset();
+    listDebugExportJobs.mockReset();
+    cancelDebugExportJob.mockReset();
+    downloadDebugExportJobArtifact.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
     localeRef.value = "zh-CN";
@@ -532,6 +618,64 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+    listDebugExportJobs.mockResolvedValue({ items: [] });
+    downloadDebugExportJobArtifact.mockResolvedValue(new Blob(["{}"], { type: "application/json" }));
+    exportDebugData.mockResolvedValue({
+      schema_version: "system.debug_export.v1",
+      generated_at: "2026-05-20T00:00:00Z",
+      manifest: {
+        detail_level: "support",
+        sensitive_handling: "masked",
+        generated_for: "admin_support_diagnostics",
+        included_sections: [],
+        safety_notes: [],
+        limits: {
+          account_scheduling_samples: 50,
+          log_attribution_samples: 50,
+          job_heartbeat_samples: 20,
+          log_attribution_window_hours: 72,
+        },
+        timeouts: {
+          export_seconds: 5,
+          probe_milliseconds: 500,
+          account_scheduling_seconds: 2,
+        },
+      },
+      redaction: {
+        mode: "allowlisted-dto-only",
+        sensitive_handling: "masked",
+        marker: "***",
+        final_pass: "logredact",
+        excluded_sections: [],
+      },
+      system: {
+        version: "test",
+        build_type: "test",
+        run_mode: "standard",
+        timezone: "UTC",
+      },
+      runtime: {},
+      server_conditions: {},
+      configuration: {},
+      ops: {
+        error_log_queue: {
+          length: 0,
+          capacity: 0,
+          dropped_total: 0,
+          enqueued_total: 0,
+          processed_total: 0,
+          sanitized_total: 0,
+        },
+      },
+      log_attribution: {},
+      sensitive_diagnostics: {
+        status: "ok",
+        handling: "masked",
+        notices: [],
+        items: [],
+      },
+      account_scheduling: {},
+    });
   });
 
   it("does not render legacy visible payment method controls", async () => {
@@ -759,6 +903,11 @@ describe("admin SettingsView wechat connect controls", () => {
     deleteProvider.mockReset();
     fetchPublicSettings.mockReset();
     adminSettingsFetch.mockReset();
+    exportDebugData.mockReset();
+    createDebugExportJob.mockReset();
+    listDebugExportJobs.mockReset();
+    cancelDebugExportJob.mockReset();
+    downloadDebugExportJobArtifact.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
 
@@ -818,6 +967,117 @@ describe("admin SettingsView wechat connect controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+    listDebugExportJobs.mockResolvedValue({ items: [] });
+    downloadDebugExportJobArtifact.mockResolvedValue(new Blob(["{}"], { type: "application/json" }));
+    exportDebugData.mockResolvedValue({
+      schema_version: "system.debug_export.v1",
+      generated_at: "2026-05-20T00:00:00Z",
+      manifest: {
+        detail_level: "support",
+        sensitive_handling: "masked",
+        generated_for: "admin_support_diagnostics",
+        included_sections: [],
+        safety_notes: [],
+        limits: {
+          account_scheduling_samples: 50,
+          log_attribution_samples: 50,
+          job_heartbeat_samples: 20,
+          log_attribution_window_hours: 24,
+          log_attribution_window_minutes: 1440,
+          log_attribution_window_seconds: 86400,
+          max_log_attribution_window_seconds: 604800,
+        },
+        timeouts: {
+          export_seconds: 5,
+          probe_milliseconds: 500,
+          account_scheduling_seconds: 2,
+        },
+      },
+      redaction: {
+        mode: "allowlisted-dto-only",
+        sensitive_handling: "masked",
+        marker: "***",
+        final_pass: "logredact",
+        excluded_sections: [],
+      },
+      system: {
+        version: "test",
+        build_type: "test",
+        run_mode: "standard",
+        timezone: "UTC",
+      },
+      runtime: {},
+      server_conditions: {},
+      configuration: {},
+      ops: {
+        error_log_queue: {
+          length: 0,
+          capacity: 0,
+          dropped_total: 0,
+          enqueued_total: 0,
+          processed_total: 0,
+          sanitized_total: 0,
+        },
+      },
+      log_attribution: {
+        status: "ok",
+        window: {
+          preset: "1d",
+          start: "2026-05-19T00:00:00Z",
+          end: "2026-05-20T00:00:00Z",
+          window_seconds: 86400,
+          window_minutes: 1440,
+          max_window_seconds: 604800,
+        },
+        window_hours: 24,
+        limit: 50,
+        capabilities: [],
+        limitations: [],
+        system_logs: {
+          status: "ok",
+          total_count: 0,
+          total_count_exact: false,
+          sample_count: 0,
+          truncated: false,
+          by_level: [],
+          by_component: [],
+          samples: [],
+        },
+        error_logs: {
+          status: "ok",
+          total_count: 0,
+          total_count_exact: false,
+          sample_count: 0,
+          truncated: false,
+          by_phase: [],
+          by_type: [],
+          by_owner: [],
+          by_source: [],
+          by_status: [],
+          samples: [],
+        },
+        diagnostic_hints: [],
+      },
+      sensitive_diagnostics: {
+        status: "ok",
+        handling: "masked",
+        notices: [],
+        items: [],
+      },
+      account_scheduling: {
+        sample_limit: 50,
+        matching_count: 0,
+        sample_count: 0,
+        truncated: false,
+        summary: {
+          by_platform: [],
+          by_type: [],
+          by_status: [],
+        },
+        blocker_counts: {},
+        samples: [],
+      },
+    });
   });
 
   it("loads and echoes WeChat Connect fields from the backend payload", async () => {
@@ -876,6 +1136,249 @@ describe("admin SettingsView wechat connect controls", () => {
     expect(link.attributes("href")).toBe("https://github.com/settings/developers");
     expect(link.attributes("target")).toBe("_blank");
     expect(link.attributes("rel")).toContain("noopener");
+  });
+
+  it("creates an async debug export job without submitting settings", async () => {
+    createDebugExportJob.mockResolvedValue({
+      id: 42,
+      status: "pending",
+      options: {
+        detail_level: "support",
+        sensitive_handling: "masked",
+        log_window_preset: "1d",
+      },
+      created_by: 1,
+      progress_percent: 0,
+      phase: "queued",
+      bytes_written: 0,
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.get('[data-testid="debug-data-export-button"]').trigger("click");
+    await flushPromises();
+
+    expect(createDebugExportJob).toHaveBeenCalledTimes(1);
+    expect(createDebugExportJob).toHaveBeenCalledWith({
+      detail_level: "support",
+      sensitive_handling: "masked",
+      log_window_preset: "1d",
+    });
+    expect(exportDebugData).not.toHaveBeenCalled();
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="debug-data-job-42"]').exists()).toBe(true);
+    expect(showSuccess).toHaveBeenCalledWith("调试导出任务已创建");
+  });
+
+  it("sends more sensitive diagnostic metadata option when enabled", async () => {
+    createDebugExportJob.mockResolvedValue({
+      id: 43,
+      status: "pending",
+      options: {
+        detail_level: "detailed",
+        sensitive_handling: "diagnostic",
+        log_window_preset: "1d",
+      },
+      created_by: 1,
+      progress_percent: 0,
+      phase: "queued",
+      bytes_written: 0,
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    expect(wrapper.text()).toContain("更多敏感数据导出");
+    expect(wrapper.text()).toContain("是否配置、长度区间和格式提示");
+    await wrapper.get('[data-testid="debug-data-detail-level"]').setValue("detailed");
+    await wrapper.get('[data-testid="debug-data-more-sensitive-toggle"]').setValue(true);
+    await wrapper.get('[data-testid="debug-data-export-button"]').trigger("click");
+    await flushPromises();
+
+    expect(createDebugExportJob).toHaveBeenCalledWith({
+      detail_level: "detailed",
+      sensitive_handling: "diagnostic",
+      log_window_preset: "1d",
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("sends custom log date range when selected", async () => {
+    createDebugExportJob.mockResolvedValue({
+      id: 44,
+      status: "pending",
+      options: {
+        detail_level: "support",
+        sensitive_handling: "masked",
+        log_window_preset: "custom",
+      },
+      created_by: 1,
+      progress_percent: 0,
+      phase: "queued",
+      bytes_written: 0,
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    expect(wrapper.text()).toContain("导出日志时间范围");
+    expect(wrapper.text()).toContain("后端使用时间索引 + LIMIT 采样");
+    await wrapper.get('[data-testid="debug-data-log-window"]').setValue("custom");
+    await wrapper.get('[data-testid="debug-data-custom-log-start"]').setValue("2026-05-19T08:30");
+    await wrapper.get('[data-testid="debug-data-custom-log-end"]').setValue("2026-05-19T10:00");
+    await wrapper.get('[data-testid="debug-data-export-button"]').trigger("click");
+    await flushPromises();
+
+    expect(createDebugExportJob).toHaveBeenCalledWith({
+      detail_level: "support",
+      sensitive_handling: "masked",
+      log_window_preset: "custom",
+      custom_log_start: new Date("2026-05-19T08:30").toISOString(),
+      custom_log_end: new Date("2026-05-19T10:00").toISOString(),
+    });
+  });
+
+  it("rejects invalid custom log date range before exporting", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.get('[data-testid="debug-data-log-window"]').setValue("custom");
+    await wrapper.get('[data-testid="debug-data-custom-log-start"]').setValue("2026-05-19T10:00");
+    await wrapper.get('[data-testid="debug-data-custom-log-end"]').setValue("2026-05-19T08:30");
+    await wrapper.get('[data-testid="debug-data-export-button"]').trigger("click");
+    await flushPromises();
+
+    expect(createDebugExportJob).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("请选择有效的日志开始和结束时间。");
+  });
+
+  it("shows an error when async debug export job creation fails", async () => {
+    createDebugExportJob.mockRejectedValueOnce(new Error("boom"));
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.get('[data-testid="debug-data-export-button"]').trigger("click");
+    await flushPromises();
+
+    expect(createDebugExportJob).toHaveBeenCalledTimes(1);
+    expect(createDebugExportJob).toHaveBeenCalledWith({
+      detail_level: "support",
+      sensitive_handling: "masked",
+      log_window_preset: "1d",
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("error");
+  });
+
+  it("renders recent debug export jobs and downloads succeeded artifacts", async () => {
+    listDebugExportJobs.mockResolvedValueOnce({
+      items: [
+        {
+          id: 45,
+          status: "succeeded",
+          options: {
+            detail_level: "support",
+            sensitive_handling: "masked",
+            log_window_preset: "1d",
+          },
+          created_by: 1,
+          progress_percent: 100,
+          phase: "ready",
+          bytes_written: 2048,
+          file_name: "debug.json",
+          file_size: 2048,
+          expires_at: "2026-05-21T00:00:00Z",
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+        },
+      ],
+    });
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:debug-export-job");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    try {
+      const wrapper = mountView();
+
+      await flushPromises();
+      await openSecurityTab(wrapper);
+      await wrapper.get('[data-testid="debug-data-job-download-45"]').trigger("click");
+      await flushPromises();
+
+      expect(wrapper.find('[data-testid="debug-data-job-45"]').exists()).toBe(true);
+      expect(downloadDebugExportJobArtifact).toHaveBeenCalledWith(45);
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(anchorClick).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:debug-export-job");
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+      anchorClick.mockRestore();
+    }
+  });
+
+  it("cancels a pending debug export job", async () => {
+    listDebugExportJobs.mockResolvedValueOnce({
+      items: [
+        {
+          id: 46,
+          status: "pending",
+          options: {
+            detail_level: "support",
+            sensitive_handling: "masked",
+            log_window_preset: "1d",
+          },
+          created_by: 1,
+          progress_percent: 10,
+          phase: "queued",
+          bytes_written: 0,
+          created_at: "2026-05-20T00:00:00Z",
+          updated_at: "2026-05-20T00:00:00Z",
+        },
+      ],
+    });
+    cancelDebugExportJob.mockResolvedValue({
+      id: 46,
+      status: "canceled",
+      options: {
+        detail_level: "support",
+        sensitive_handling: "masked",
+        log_window_preset: "1d",
+      },
+      created_by: 1,
+      progress_percent: 10,
+      phase: "canceled",
+      bytes_written: 0,
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.get('[data-testid="debug-data-job-cancel-46"]').trigger("click");
+    await flushPromises();
+
+    expect(cancelDebugExportJob).toHaveBeenCalledWith(46);
+    expect(showSuccess).toHaveBeenCalledWith("调试导出任务已取消");
   });
 
   it("saves WeChat Connect fields using the backend contract and clears the secret after save", async () => {
