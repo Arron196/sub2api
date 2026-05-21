@@ -13,6 +13,8 @@ type OpsRepository interface {
 	ListRequestDetails(ctx context.Context, filter *OpsRequestDetailFilter) ([]*OpsRequestDetail, int64, error)
 	BatchInsertSystemLogs(ctx context.Context, inputs []*OpsInsertSystemLogInput) (int64, error)
 	ListSystemLogs(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
+	SampleSystemLogsForDebugExport(ctx context.Context, start, end time.Time, limit int) ([]*OpsSystemLog, bool, error)
+	SampleErrorLogsForDebugExport(ctx context.Context, start, end time.Time, limit int) ([]*OpsErrorLog, bool, error)
 	DeleteSystemLogs(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error)
 	InsertSystemLogCleanupAudit(ctx context.Context, input *OpsSystemLogCleanupAudit) error
 
@@ -34,7 +36,7 @@ type OpsRepository interface {
 	GetLatestSystemMetrics(ctx context.Context, windowMinutes int) (*OpsSystemMetricsSnapshot, error)
 
 	UpsertJobHeartbeat(ctx context.Context, input *OpsUpsertJobHeartbeatInput) error
-	ListJobHeartbeats(ctx context.Context) ([]*OpsJobHeartbeat, error)
+	ListJobHeartbeats(ctx context.Context, limit int) ([]*OpsJobHeartbeat, error)
 
 	// Alerts (rules + events)
 	ListAlertRules(ctx context.Context) ([]*OpsAlertRule, error)

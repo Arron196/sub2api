@@ -342,9 +342,12 @@ ON CONFLICT (job_name) DO UPDATE SET
 	return err
 }
 
-func (r *opsRepository) ListJobHeartbeats(ctx context.Context) ([]*service.OpsJobHeartbeat, error) {
+func (r *opsRepository) ListJobHeartbeats(ctx context.Context, limit int) ([]*service.OpsJobHeartbeat, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
+	}
+	if limit < 0 {
+		return nil, fmt.Errorf("invalid job heartbeat limit")
 	}
 
 	q := `
@@ -359,8 +362,14 @@ SELECT
   updated_at
 FROM ops_job_heartbeats
 ORDER BY job_name ASC`
+	args := []any{}
+	if limit > 0 {
+		q += `
+LIMIT $1`
+		args = append(args, limit)
+	}
 
-	rows, err := r.db.QueryContext(ctx, q)
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

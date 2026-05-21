@@ -772,6 +772,154 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	}, nil
 }
 
+func (r *opsRepository) SampleSystemLogsForDebugExport(ctx context.Context, start, end time.Time, limit int) ([]*service.OpsSystemLog, bool, error) {
+	if r == nil || r.db == nil {
+		return nil, false, fmt.Errorf("nil ops repository")
+	}
+	if !start.Before(end) {
+		return nil, false, fmt.Errorf("invalid debug export system log window")
+	}
+	if limit <= 0 {
+		return []*service.OpsSystemLog{}, false, nil
+	}
+	queryLimit := limit + 1
+	query := `
+SELECT
+  l.id,
+  l.created_at,
+  l.level,
+  COALESCE(l.component, ''),
+  COALESCE(l.message, ''),
+  COALESCE(l.request_id, ''),
+  COALESCE(l.client_request_id, ''),
+  COALESCE(l.platform, ''),
+  COALESCE(l.model, '')
+FROM ops_system_logs l
+WHERE l.created_at >= $1 AND l.created_at < $2
+ORDER BY l.created_at DESC, l.id DESC
+LIMIT $3`
+	rows, err := r.db.QueryContext(ctx, query, start.UTC(), end.UTC(), queryLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*service.OpsSystemLog, 0, limit)
+	for rows.Next() {
+		item := &service.OpsSystemLog{}
+		if err := rows.Scan(
+			&item.ID,
+			&item.CreatedAt,
+			&item.Level,
+			&item.Component,
+			&item.Message,
+			&item.RequestID,
+			&item.ClientRequestID,
+			&item.Platform,
+			&item.Model,
+		); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
+func (r *opsRepository) SampleErrorLogsForDebugExport(ctx context.Context, start, end time.Time, limit int) ([]*service.OpsErrorLog, bool, error) {
+	if r == nil || r.db == nil {
+		return nil, false, fmt.Errorf("nil ops repository")
+	}
+	if !start.Before(end) {
+		return nil, false, fmt.Errorf("invalid debug export error log window")
+	}
+	if limit <= 0 {
+		return []*service.OpsErrorLog{}, false, nil
+	}
+	queryLimit := limit + 1
+	query := `
+SELECT
+  e.id,
+  e.created_at,
+  e.error_phase,
+  e.error_type,
+  COALESCE(e.error_owner, ''),
+  COALESCE(e.error_source, ''),
+  e.severity,
+  COALESCE(e.upstream_status_code, e.status_code, 0),
+  COALESCE(e.platform, ''),
+  COALESCE(e.model, ''),
+  COALESCE(e.client_request_id, ''),
+  COALESCE(e.request_id, ''),
+  COALESCE(e.error_message, ''),
+  COALESCE(e.request_path, ''),
+  COALESCE(e.inbound_endpoint, ''),
+  COALESCE(e.upstream_endpoint, ''),
+  COALESCE(e.requested_model, ''),
+  COALESCE(e.upstream_model, ''),
+  e.request_type
+FROM ops_error_logs e
+WHERE e.created_at >= $1 AND e.created_at < $2
+  AND COALESCE(e.status_code, 0) >= 400
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $3`
+	rows, err := r.db.QueryContext(ctx, query, start.UTC(), end.UTC(), queryLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*service.OpsErrorLog, 0, limit)
+	for rows.Next() {
+		item := &service.OpsErrorLog{}
+		var statusCode sql.NullInt64
+		var requestType sql.NullInt64
+		if err := rows.Scan(
+			&item.ID,
+			&item.CreatedAt,
+			&item.Phase,
+			&item.Type,
+			&item.Owner,
+			&item.Source,
+			&item.Severity,
+			&statusCode,
+			&item.Platform,
+			&item.Model,
+			&item.ClientRequestID,
+			&item.RequestID,
+			&item.Message,
+			&item.RequestPath,
+			&item.InboundEndpoint,
+			&item.UpstreamEndpoint,
+			&item.RequestedModel,
+			&item.UpstreamModel,
+			&requestType,
+		); err != nil {
+			return nil, false, err
+		}
+		item.StatusCode = int(statusCode.Int64)
+		if requestType.Valid {
+			v := int16(requestType.Int64)
+			item.RequestType = &v
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
 func (r *opsRepository) DeleteSystemLogs(ctx context.Context, filter *service.OpsSystemLogCleanupFilter) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")

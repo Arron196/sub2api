@@ -59,7 +59,7 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 		log.Printf("[Ops] GetLatestSystemMetrics failed: %v", err)
 	}
 
-	if heartbeats, err := s.opsRepo.ListJobHeartbeats(ctx); err == nil {
+	if heartbeats, err := s.opsRepo.ListJobHeartbeats(ctx, 0); err == nil {
 		overview.JobHeartbeats = heartbeats
 	} else {
 		log.Printf("[Ops] ListJobHeartbeats failed: %v", err)

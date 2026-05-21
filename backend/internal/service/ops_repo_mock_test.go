@@ -55,6 +55,14 @@ func (m *opsRepoMock) ListSystemLogs(ctx context.Context, filter *OpsSystemLogFi
 	return &OpsSystemLogList{Logs: []*OpsSystemLog{}, Total: 0, Page: 1, PageSize: 50}, nil
 }
 
+func (m *opsRepoMock) SampleSystemLogsForDebugExport(context.Context, time.Time, time.Time, int) ([]*OpsSystemLog, bool, error) {
+	return []*OpsSystemLog{}, false, nil
+}
+
+func (m *opsRepoMock) SampleErrorLogsForDebugExport(context.Context, time.Time, time.Time, int) ([]*OpsErrorLog, bool, error) {
+	return []*OpsErrorLog{}, false, nil
+}
+
 func (m *opsRepoMock) DeleteSystemLogs(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error) {
 	if m.DeleteSystemLogsFn != nil {
 		return m.DeleteSystemLogsFn(ctx, filter)
@@ -117,7 +125,7 @@ func (m *opsRepoMock) UpsertJobHeartbeat(ctx context.Context, input *OpsUpsertJo
 	return nil
 }
 
-func (m *opsRepoMock) ListJobHeartbeats(ctx context.Context) ([]*OpsJobHeartbeat, error) {
+func (m *opsRepoMock) ListJobHeartbeats(ctx context.Context, limit int) ([]*OpsJobHeartbeat, error) {
 	return []*OpsJobHeartbeat{}, nil
 }
 
