@@ -59,12 +59,13 @@ export const useSubscriptionStore = defineStore('subscriptions', () => {
     const requestPromise = subscriptionsAPI
       .getActiveSubscriptions()
       .then((data) => {
+        const subscriptions = Array.isArray(data) ? data : []
         if (currentGeneration === requestGeneration) {
-          activeSubscriptions.value = data
+          activeSubscriptions.value = subscriptions
           loaded.value = true
           lastFetchedAt.value = Date.now()
         }
-        return data
+        return subscriptions
       })
       .catch((error) => {
         console.error('Failed to fetch active subscriptions:', error)

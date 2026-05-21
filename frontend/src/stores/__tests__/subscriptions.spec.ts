@@ -69,6 +69,18 @@ describe('useSubscriptionStore', () => {
       expect(store.loading).toBe(false)
     })
 
+    it('接口返回空值时按无活跃订阅处理', async () => {
+      mockGetActiveSubscriptions.mockResolvedValue(null)
+      const store = useSubscriptionStore()
+
+      const result = await store.fetchActiveSubscriptions()
+
+      expect(result).toEqual([])
+      expect(store.activeSubscriptions).toEqual([])
+      expect(store.hasActiveSubscriptions).toBe(false)
+      expect(store.loading).toBe(false)
+    })
+
     it('缓存有效时返回缓存数据', async () => {
       mockGetActiveSubscriptions.mockResolvedValue(fakeSubscriptions)
       const store = useSubscriptionStore()
