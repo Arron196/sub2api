@@ -504,6 +504,12 @@ func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		system.POST("/update", h.Admin.System.PerformUpdate)
 		system.POST("/rollback", h.Admin.System.Rollback)
 		system.POST("/restart", h.Admin.System.RestartService)
+		system.POST("/debug-export", h.Admin.System.DebugExport)
+		system.POST("/debug-export-jobs", h.Admin.System.CreateDebugExportJob)
+		system.GET("/debug-export-jobs", h.Admin.System.ListDebugExportJobs)
+		system.GET("/debug-export-jobs/:id", h.Admin.System.GetDebugExportJob)
+		system.POST("/debug-export-jobs/:id/cancel", h.Admin.System.CancelDebugExportJob)
+		system.GET("/debug-export-jobs/:id/download", h.Admin.System.DownloadDebugExportJob)
 	}
 }
 
