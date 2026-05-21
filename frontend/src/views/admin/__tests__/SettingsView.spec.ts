@@ -230,10 +230,9 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.debugData.detailLevels.detailed": "详细",
     "admin.settings.debugData.detailLevels.support": "支持排障 / 最详细",
     "admin.settings.debugData.moreSensitiveLabel": "更多敏感数据导出",
-        "admin.settings.debugData.moreSensitiveHint": "会额外导出敏感项的是否配置、长度区间和格式提示。",
+    "admin.settings.debugData.moreSensitiveHint": "会额外导出敏感项的是否配置、长度区间和格式提示。",
     "admin.settings.debugData.logWindowLabel": "导出日志时间范围",
     "admin.settings.debugData.logWindowHint": "只采样所选时间范围内的索引日志归因信息。",
-    "admin.settings.debugData.logWindowPerformanceHint": "后端使用时间索引 + LIMIT 采样，不做全量 COUNT。",
     "admin.settings.debugData.logWindowPresets.last30Minutes": "最近半小时",
     "admin.settings.debugData.logWindowPresets.last6Hours": "最近 6 小时",
     "admin.settings.debugData.logWindowPresets.last1Day": "最近一天",
@@ -1232,7 +1231,6 @@ describe("admin SettingsView wechat connect controls", () => {
     await flushPromises();
     await openSecurityTab(wrapper);
     expect(wrapper.text()).toContain("导出日志时间范围");
-    expect(wrapper.text()).toContain("后端使用时间索引 + LIMIT 采样");
     await wrapper.get('[data-testid="debug-data-log-window"]').setValue("custom");
     await wrapper.get('[data-testid="debug-data-custom-log-start"]').setValue("2026-05-19T08:30");
     await wrapper.get('[data-testid="debug-data-custom-log-end"]').setValue("2026-05-19T10:00");
@@ -1332,6 +1330,18 @@ describe("admin SettingsView wechat connect controls", () => {
       revokeObjectURL.mockRestore();
       anchorClick.mockRestore();
     }
+  });
+
+  it("renders an empty debug export job list when the API omits items", async () => {
+    listDebugExportJobs.mockResolvedValueOnce({});
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    expect(wrapper.find('[data-testid="debug-data-jobs-empty"]').exists()).toBe(true);
+    expect(showError).not.toHaveBeenCalledWith("admin.settings.debugData.loadJobsFailed");
   });
 
   it("cancels a pending debug export job", async () => {

@@ -310,9 +310,6 @@
                       {{ t("admin.settings.debugData.logWindowHint") }}
                     </p>
                   </div>
-                  <div class="rounded-lg bg-gray-50 p-3 text-xs text-gray-500 dark:bg-dark-700/60 dark:text-gray-400">
-                    {{ t("admin.settings.debugData.logWindowPerformanceHint") }}
-                  </div>
                 </div>
                 <div
                   v-if="debugDataLogWindowPreset === 'custom'"
@@ -1126,7 +1123,7 @@
                       </label>
                       <Select
                         :modelValue="rule.action"
-                        @update:modelValue="rule.action = $event as any"
+                        @update:modelValue="updateBetaPolicyAction(rule, $event)"
                         :options="betaPolicyActionOptions"
                       />
                     </div>
@@ -1140,7 +1137,7 @@
                       </label>
                       <Select
                         :modelValue="rule.scope"
-                        @update:modelValue="rule.scope = $event as any"
+                        @update:modelValue="updateBetaPolicyScope(rule, $event)"
                         :options="betaPolicyScopeOptions"
                       />
                     </div>
@@ -1288,7 +1285,7 @@
                     </label>
                     <Select
                       :modelValue="rule.fallback_action || 'pass'"
-                      @update:modelValue="rule.fallback_action = $event as any"
+                      @update:modelValue="updateBetaPolicyFallbackAction(rule, $event)"
                       :options="betaPolicyActionOptions"
                     />
                     <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
@@ -7005,16 +7002,19 @@ const rectifierForm = reactive({
 // Beta Policy 状态
 const betaPolicyLoading = ref(true);
 const betaPolicySaving = ref(false);
+type BetaPolicyAction = "pass" | "filter" | "block";
+type BetaPolicyScope = "all" | "oauth" | "apikey" | "bedrock";
+type BetaPolicyRule = {
+  beta_token: string;
+  action: BetaPolicyAction;
+  scope: BetaPolicyScope;
+  error_message?: string;
+  model_whitelist?: string[];
+  fallback_action?: BetaPolicyAction;
+  fallback_error_message?: string;
+};
 const betaPolicyForm = reactive({
-  rules: [] as Array<{
-    beta_token: string;
-    action: "pass" | "filter" | "block";
-    scope: "all" | "oauth" | "apikey" | "bedrock";
-    error_message?: string;
-    model_whitelist?: string[];
-    fallback_action?: "pass" | "filter" | "block";
-    fallback_error_message?: string;
-  }>,
+  rules: [] as BetaPolicyRule[],
 });
 
 // OpenAI Fast/Flex Policy 状态
@@ -8734,13 +8734,48 @@ function updateDebugExportJobPolling(): void {
   }
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function readArrayField(value: unknown, field: string): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!isObjectRecord(value)) return [];
+
+  const direct = value[field];
+  if (Array.isArray(direct)) return direct;
+
+  const nestedData = value.data;
+  if (isObjectRecord(nestedData)) {
+    const nested = nestedData[field];
+    if (Array.isArray(nested)) return nested;
+  }
+
+  return [];
+}
+
+function normalizeDebugExportJobsResponse(value: unknown): DebugExportJob[] {
+  return readArrayField(value, "items") as DebugExportJob[];
+}
+
+function normalizeProviderListResponse(value: unknown): ProviderInstance[] {
+  return readArrayField(value, "data")
+    .filter(isObjectRecord)
+    .map((provider) => ({
+      ...provider,
+      supported_types: Array.isArray(provider.supported_types)
+        ? [...provider.supported_types]
+        : [],
+    })) as ProviderInstance[];
+}
+
 async function loadDebugExportJobs(options: { silent?: boolean } = {}): Promise<void> {
   if (!options.silent) {
     debugDataJobsLoading.value = true;
   }
   try {
     const result = await adminAPI.system.listDebugExportJobs();
-    debugDataJobs.value = result.items;
+    debugDataJobs.value = normalizeDebugExportJobsResponse(result);
     updateDebugExportJobPolling();
   } catch (error: unknown) {
     if (!options.silent) {
@@ -9057,12 +9092,38 @@ function getBetaDisplayName(token: string): string {
   return betaDisplayNames[token] || token;
 }
 
+function isBetaPolicyAction(value: unknown): value is BetaPolicyAction {
+  return value === "pass" || value === "filter" || value === "block";
+}
+
+function isBetaPolicyScope(value: unknown): value is BetaPolicyScope {
+  return value === "all" || value === "oauth" || value === "apikey" || value === "bedrock";
+}
+
+function updateBetaPolicyAction(rule: BetaPolicyRule, value: unknown): void {
+  if (isBetaPolicyAction(value)) {
+    rule.action = value;
+  }
+}
+
+function updateBetaPolicyScope(rule: BetaPolicyRule, value: unknown): void {
+  if (isBetaPolicyScope(value)) {
+    rule.scope = value;
+  }
+}
+
+function updateBetaPolicyFallbackAction(rule: BetaPolicyRule, value: unknown): void {
+  if (isBetaPolicyAction(value)) {
+    rule.fallback_action = value;
+  }
+}
+
 function applyBetaPreset(
-  rule: (typeof betaPolicyForm.rules)[number],
+  rule: BetaPolicyRule,
   preset: {
-    action: "pass" | "filter" | "block";
+    action: BetaPolicyAction;
     model_whitelist: string[];
-    fallback_action: "pass" | "filter" | "block";
+    fallback_action: BetaPolicyAction;
   },
 ) {
   rule.action = preset.action;
@@ -9071,7 +9132,7 @@ function applyBetaPreset(
 }
 
 function addQuickPattern(
-  rule: (typeof betaPolicyForm.rules)[number],
+  rule: BetaPolicyRule,
   pattern: string,
 ) {
   if (!rule.model_whitelist) rule.model_whitelist = [];
@@ -9084,7 +9145,7 @@ async function loadBetaPolicySettings() {
   betaPolicyLoading.value = true;
   try {
     const settings = await adminAPI.settings.getBetaPolicySettings();
-    betaPolicyForm.rules = settings.rules;
+    betaPolicyForm.rules = Array.isArray(settings.rules) ? settings.rules : [];
   } catch (_error: unknown) {
     // Silent fail - settings will use defaults
   } finally {
@@ -9172,7 +9233,7 @@ async function saveBetaPolicySettings() {
     const updated = await adminAPI.settings.updateBetaPolicySettings({
       rules: cleanedRules,
     });
-    betaPolicyForm.rules = updated.rules;
+    betaPolicyForm.rules = Array.isArray(updated.rules) ? updated.rules : [];
     appStore.showSuccess(t("admin.settings.betaPolicy.saved"));
   } catch (error: unknown) {
     appStore.showError(
@@ -9379,7 +9440,7 @@ async function loadProviders() {
   providersLoading.value = true;
   try {
     const res = await adminAPI.payment.getProviders();
-    providers.value = res.data || [];
+    providers.value = normalizeProviderListResponse(res);
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
   } finally {
@@ -9473,9 +9534,12 @@ async function handleToggleField(
 }
 
 async function handleToggleType(provider: ProviderInstance, type: string) {
-  const updated = provider.supported_types.includes(type)
-    ? provider.supported_types.filter((t) => t !== type)
-    : [...provider.supported_types, type];
+  const supportedTypes = Array.isArray(provider.supported_types)
+    ? provider.supported_types
+    : [];
+  const updated = supportedTypes.includes(type)
+    ? supportedTypes.filter((t) => t !== type)
+    : [...supportedTypes, type];
   const conflict = findProviderEnablementConflict({
     id: provider.id,
     provider_key: provider.provider_key,
@@ -9490,7 +9554,7 @@ async function handleToggleType(provider: ProviderInstance, type: string) {
   try {
     await adminAPI.payment.updateProvider(provider.id, {
       supported_types: updated,
-    } as any);
+    });
     await loadProviders();
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));

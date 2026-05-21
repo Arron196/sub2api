@@ -6070,7 +6070,6 @@ export default {
         moreSensitiveHint: '会额外导出数据库、Redis、认证、OAuth、管理员初始配置等敏感项的“是否配置”、长度区间和格式提示；仍不会导出明文密码、API Key、Token、Cookie、私钥、请求体、响应体、原始日志或可逆指纹。',
         logWindowLabel: '导出日志时间范围',
         logWindowHint: '只采样所选时间范围内的索引日志归因信息；不会全量导出日志。',
-        logWindowPerformanceHint: '为避免百万级日志导致卡顿，后端使用时间索引 + LIMIT 采样，不做全量 COUNT。超过采样上限会在调试包中标记为已截断。',
         logWindowPresets: {
           last30Minutes: '最近半小时',
           last6Hours: '最近 6 小时',

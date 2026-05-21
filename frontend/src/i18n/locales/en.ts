@@ -5912,7 +5912,6 @@ export default {
         moreSensitiveHint: 'Adds configured status, length buckets, and format hints for database/Redis/auth/OAuth/admin sensitive settings. It still does not export plaintext passwords, API keys, tokens, cookies, private keys, request bodies, response bodies, raw logs, or reversible fingerprints.',
         logWindowLabel: 'Export log time range',
         logWindowHint: 'Samples indexed log attribution inside the selected range only; it does not export all logs.',
-        logWindowPerformanceHint: 'To avoid stalls on million-row log tables, the backend uses time-indexed LIMIT sampling without full COUNT. The bundle marks the section as truncated when more rows exist.',
         logWindowPresets: {
           last30Minutes: 'Last 30 minutes',
           last6Hours: 'Last 6 hours',
