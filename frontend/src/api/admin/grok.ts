@@ -38,6 +38,7 @@ export interface GrokTokenInfo {
   client_id?: string
   email?: string
   sub?: string
+	user_id?: string
   team_id?: string
   subscription_tier?: string
   entitlement_status?: string

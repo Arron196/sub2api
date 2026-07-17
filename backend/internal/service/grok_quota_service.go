@@ -321,6 +321,9 @@ func (s *GrokQuotaService) fetchBilling(
 		return nil, 0, infraerrors.Newf(http.StatusInternalServerError, "GROK_QUOTA_PROBE_REQUEST_BUILD_FAILED", "failed to build billing request: %v", err)
 	}
 	xai.ApplyCLIBillingHeaders(req, token)
+	if userID := grokBillingUserID(account, token); userID != "" {
+		req.Header.Set("X-UserID", userID)
+	}
 	// billing 探测与真实转发保持同一套账号级请求头覆写。
 	account.ApplyHeaderOverrides(req.Header)
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, maxInt(account.Concurrency, 2))
@@ -343,6 +346,30 @@ func (s *GrokQuotaService) fetchBilling(
 		return nil, resp.StatusCode, infraerrors.Newf(http.StatusBadGateway, "GROK_QUOTA_BILLING_PARSE_ERROR", "failed to parse billing body: %v", err)
 	}
 	return xai.BuildBillingSummary(payload.Config), resp.StatusCode, nil
+}
+
+// grokBillingUserID keeps billing requests aligned with the Grok CLI. Existing
+// OAuth accounts can derive the identifier from their access token, so this
+// does not require a credential migration.
+func grokBillingUserID(account *Account, accessToken string) string {
+	if userID := grokStoredUserID(account); userID != "" {
+		return userID
+	}
+	claims := xai.DecodeJWTClaims(accessToken)
+	for _, key := range []string{"user_id", "userId", "userid"} {
+		if value := strings.TrimSpace(xai.JWTClaimString(claims, key)); value != "" {
+			return value
+		}
+	}
+	if account != nil {
+		if subject := strings.TrimSpace(account.GetCredential("sub")); subject != "" {
+			return subject
+		}
+	}
+	if subject := strings.TrimSpace(xai.JWTClaimString(claims, "sub")); subject != "" {
+		return subject
+	}
+	return ""
 }
 
 func mergeGrokBillingProbeErrors(weeklyStatus, monthlyStatus int, weeklyErr, monthlyErr error) error {

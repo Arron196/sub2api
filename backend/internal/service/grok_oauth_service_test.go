@@ -82,15 +82,17 @@ func TestGrokOAuthServiceBuildAccountCredentialsDefaultsToSubscriptionProxy(t *t
 	credentials := svc.BuildAccountCredentials(&GrokTokenInfo{
 		AccessToken: "access-token",
 		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		UserID:      "grok-user-id",
 	})
 
 	require.Equal(t, xai.DefaultCLIBaseURL, credentials["base_url"])
+	require.Equal(t, "grok-user-id", credentials["user_id"])
 }
 
 func TestGrokOAuthServiceConvertFromSSOExtractsBuildClaims(t *testing.T) {
 	svc := NewGrokOAuthService(nil, &grokOAuthClientStub{
 		ssoResponse: &xai.TokenResponse{
-			AccessToken:  makeGrokOAuthJWT(map[string]any{"sub": "user-sub", "team_id": "team-1"}),
+			AccessToken:  makeGrokOAuthJWT(map[string]any{"sub": "user-sub", "user_id": "grok-user-id", "team_id": "team-1"}),
 			RefreshToken: "refresh-token",
 			IDToken:      makeGrokOAuthJWT(map[string]any{"email": "user@example.com"}),
 			ExpiresIn:    3600,
@@ -102,11 +104,13 @@ func TestGrokOAuthServiceConvertFromSSOExtractsBuildClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "user@example.com", info.Email)
 	require.Equal(t, "user-sub", info.Subject)
+	require.Equal(t, "grok-user-id", info.UserID)
 	require.Equal(t, "team-1", info.TeamID)
 
 	credentials := svc.BuildAccountCredentials(info)
 	require.Equal(t, "user@example.com", credentials["email"])
 	require.Equal(t, "user-sub", credentials["sub"])
+	require.Equal(t, "grok-user-id", credentials["user_id"])
 	require.Equal(t, "team-1", credentials["team_id"])
 }
 

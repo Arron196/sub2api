@@ -101,6 +101,7 @@ type GrokTokenInfo struct {
 	Scope             string `json:"scope,omitempty"`
 	Email             string `json:"email,omitempty"`
 	Subject           string `json:"sub,omitempty"`
+	UserID            string `json:"user_id,omitempty"`
 	TeamID            string `json:"team_id,omitempty"`
 	SubscriptionTier  string `json:"subscription_tier,omitempty"`
 	EntitlementStatus string `json:"entitlement_status,omitempty"`
@@ -212,6 +213,9 @@ func (s *GrokOAuthService) RefreshAccountToken(ctx context.Context, account *Acc
 	}
 	tokenInfo.SubscriptionTier = account.GetCredential("subscription_tier")
 	tokenInfo.EntitlementStatus = account.GetCredential("entitlement_status")
+	if tokenInfo.UserID == "" {
+		tokenInfo.UserID = grokStoredUserID(account)
+	}
 	return tokenInfo, nil
 }
 
@@ -244,6 +248,9 @@ func (s *GrokOAuthService) BuildAccountCredentials(tokenInfo *GrokTokenInfo) map
 	}
 	if tokenInfo.Subject != "" {
 		creds["sub"] = tokenInfo.Subject
+	}
+	if tokenInfo.UserID != "" {
+		creds["user_id"] = tokenInfo.UserID
 	}
 	if tokenInfo.TeamID != "" {
 		creds["team_id"] = tokenInfo.TeamID
@@ -297,6 +304,14 @@ func (s *GrokOAuthService) tokenInfoFromResponse(tokenResp *xai.TokenResponse, c
 				info.Subject = subject
 			}
 		}
+		if info.UserID == "" {
+			for _, key := range []string{"user_id", "userId", "userid", "x_userid"} {
+				if userID, _ := existing[key].(string); strings.TrimSpace(userID) != "" {
+					info.UserID = strings.TrimSpace(userID)
+					break
+				}
+			}
+		}
 		if info.TeamID == "" {
 			if teamID, _ := existing["team_id"].(string); teamID != "" {
 				info.TeamID = teamID
@@ -340,7 +355,27 @@ func applyGrokTokenClaims(info *GrokTokenInfo, token string) {
 	if info.Subject == "" {
 		info.Subject = xai.JWTClaimString(claims, "sub")
 	}
+	if info.UserID == "" {
+		for _, key := range []string{"user_id", "userId", "userid"} {
+			if userID := strings.TrimSpace(xai.JWTClaimString(claims, key)); userID != "" {
+				info.UserID = userID
+				break
+			}
+		}
+	}
 	if info.TeamID == "" {
 		info.TeamID = xai.JWTClaimString(claims, "team_id")
 	}
+}
+
+func grokStoredUserID(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	for _, key := range []string{"user_id", "userId", "userid", "x_userid"} {
+		if userID := strings.TrimSpace(account.GetCredential(key)); userID != "" {
+			return userID
+		}
+	}
+	return ""
 }
