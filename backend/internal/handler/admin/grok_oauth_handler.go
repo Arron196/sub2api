@@ -23,7 +23,7 @@ type GrokOAuthHandler struct {
 	grokOAuthService *service.GrokOAuthService
 	adminService     service.AdminService
 	quotaService     *service.GrokQuotaService
-	importProber     grokUsageProber
+	quotaRefresh     grokQuotaRefresher
 	reconciler       service.GrokOAuthReconciler
 }
 
@@ -37,7 +37,7 @@ func NewGrokOAuthHandler(
 		grokOAuthService: grokOAuthService,
 		adminService:     adminService,
 		quotaService:     quotaService,
-		importProber:     quotaService,
+		quotaRefresh:     quotaService,
 		reconciler:       reconciler,
 	}
 }

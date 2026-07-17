@@ -12,15 +12,17 @@ import (
 
 const (
 	grokImportProbeConcurrency = 3
-	grokImportProbeTimeout     = 25 * time.Second
+	// QueryQuota may run the 20s billing query and then fall back to an active
+	// 20s Responses probe, so leave room for both operations.
+	grokImportProbeTimeout = 50 * time.Second
 )
 
-type grokUsageProber interface {
-	ProbeUsage(ctx context.Context, accountID int64) (*service.GrokQuotaProbeResult, error)
+type grokQuotaRefresher interface {
+	QueryQuota(ctx context.Context, accountID int64) (*service.GrokQuotaProbeResult, error)
 }
 
 type grokImportProbeTask struct {
-	prober    grokUsageProber
+	refresher grokQuotaRefresher
 	accountID int64
 }
 
@@ -51,8 +53,8 @@ func newGrokImportProbeScheduler(concurrency int, timeout time.Duration) *grokIm
 	}
 }
 
-func (s *grokImportProbeScheduler) schedule(prober grokUsageProber, account *service.Account) {
-	if s == nil || prober == nil || account == nil || account.ID <= 0 {
+func (s *grokImportProbeScheduler) schedule(refresher grokQuotaRefresher, account *service.Account) {
+	if s == nil || refresher == nil || account == nil || account.ID <= 0 {
 		return
 	}
 	if account.Platform != service.PlatformGrok || account.Type != service.AccountTypeOAuth {
@@ -60,7 +62,7 @@ func (s *grokImportProbeScheduler) schedule(prober grokUsageProber, account *ser
 	}
 
 	s.mu.Lock()
-	s.queue = append(s.queue, grokImportProbeTask{prober: prober, accountID: account.ID})
+	s.queue = append(s.queue, grokImportProbeTask{refresher: refresher, accountID: account.ID})
 	if s.workers < s.concurrency {
 		s.workers++
 		if s.workers > s.maxWorkers {
@@ -77,7 +79,7 @@ func (s *grokImportProbeScheduler) worker() {
 		if !ok {
 			return
 		}
-		s.run(task.prober, task.accountID)
+		s.run(task.refresher, task.accountID)
 	}
 }
 
@@ -97,25 +99,25 @@ func (s *grokImportProbeScheduler) nextTask() (grokImportProbeTask, bool) {
 	return task, true
 }
 
-func (s *grokImportProbeScheduler) run(prober grokUsageProber, accountID int64) {
+func (s *grokImportProbeScheduler) run(refresher grokQuotaRefresher, accountID int64) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			slog.Error(
-				"grok_import_active_probe_panic",
+				"grok_import_quota_refresh_panic",
 				"account_id", accountID,
 				"recovery_type", panicType(recovered),
 			)
 		}
 	}()
 
-	// Queue time is intentionally excluded: every imported account is probed,
-	// while this timeout only bounds the actual upstream probe execution.
+	// Queue time is intentionally excluded: every imported account is refreshed,
+	// while this timeout only bounds the actual upstream work.
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
-	result, err := prober.ProbeUsage(ctx, accountID)
+	result, err := refresher.QueryQuota(ctx, accountID)
 	if err != nil {
 		slog.Warn(
-			"grok_import_active_probe_failed",
+			"grok_import_quota_refresh_failed",
 			"account_id", accountID,
 			"status", infraerrors.Code(err),
 			"reason", infraerrors.Reason(err),
@@ -124,7 +126,7 @@ func (s *grokImportProbeScheduler) run(prober grokUsageProber, accountID int64) 
 	}
 	if result == nil {
 		slog.Warn(
-			"grok_import_active_probe_failed",
+			"grok_import_quota_refresh_failed",
 			"account_id", accountID,
 			"reason", "empty_result",
 		)
@@ -132,11 +134,12 @@ func (s *grokImportProbeScheduler) run(prober grokUsageProber, accountID int64) 
 	}
 
 	slog.Info(
-		"grok_import_active_probe_completed",
+		"grok_import_quota_refresh_completed",
 		"account_id", accountID,
+		"source", result.Source,
 		"model", result.Model,
 		"status", result.StatusCode,
-		"headers_observed", result.HeadersObserved,
+		"billing_observed", result.Billing != nil,
 	)
 }
 
@@ -155,14 +158,14 @@ func (h *AccountHandler) scheduleGrokImportProbe(account *service.Account) {
 	if h == nil {
 		return
 	}
-	defaultGrokImportProbeScheduler.schedule(h.grokImportProber, account)
+	defaultGrokImportProbeScheduler.schedule(h.grokQuotaRefresh, account)
 }
 
 func (h *GrokOAuthHandler) scheduleGrokImportProbe(account *service.Account) {
 	if h == nil {
 		return
 	}
-	defaultGrokImportProbeScheduler.schedule(h.importProber, account)
+	defaultGrokImportProbeScheduler.schedule(h.quotaRefresh, account)
 }
 
 // ProvideAccountHandler injects the Grok active prober for production while
@@ -200,6 +203,6 @@ func ProvideAccountHandler(
 		rpmCache,
 		tokenCacheInvalidator,
 	)
-	handler.grokImportProber = grokQuotaService
+	handler.grokQuotaRefresh = grokQuotaService
 	return handler
 }
