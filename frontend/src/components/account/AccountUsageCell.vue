@@ -386,24 +386,9 @@
           label="7d"
           :utilization="grokWeeklyBillingBar.utilization"
           :resets-at="grokWeeklyBillingBar.resetsAt"
+          :reset-label="t('admin.accounts.usageWindow.grokNextReset')"
           :show-now-when-idle="true"
           color="indigo"
-        />
-        <UsageProgressBar
-          v-if="!grokWeeklyBillingBar && !grokIsFree && grokRequestQuotaBar"
-          :label="t('admin.accounts.usageWindow.grokRequests')"
-          :utilization="grokRequestQuotaBar.utilization"
-          :resets-at="grokRequestQuotaBar.resetsAt"
-          :remaining-capacity="true"
-          color="indigo"
-        />
-        <UsageProgressBar
-          v-if="!grokWeeklyBillingBar && !grokIsFree && grokTokenQuotaBar"
-          :label="t('admin.accounts.usageWindow.grokTokens')"
-          :utilization="grokTokenQuotaBar.utilization"
-          :resets-at="grokTokenQuotaBar.resetsAt"
-          :remaining-capacity="true"
-          color="emerald"
         />
         <UsageProgressBar
           v-if="grokFreeTokenBar"
@@ -1050,24 +1035,8 @@ const geminiUsageBars = computed(() => {
   return bars
 })
 
-interface GrokQuotaBarInfo {
-  utilization: number
-  resetsAt: string | null
-}
-
-const makeGrokQuotaBar = (quota?: { limit?: number | null; remaining?: number | null; reset_at?: string | null } | null): GrokQuotaBarInfo | null => {
-  if (!quota || quota.limit == null || quota.remaining == null || quota.limit <= 0) return null
-  const remaining = Math.min(quota.limit, Math.max(0, quota.remaining))
-  return {
-    utilization: (remaining / quota.limit) * 100,
-    resetsAt: quota.reset_at || null
-  }
-}
-
-const grokRequestQuotaBar = computed(() => makeGrokQuotaBar(usageInfo.value?.grok_request_quota))
-const grokTokenQuotaBar = computed(() => makeGrokQuotaBar(usageInfo.value?.grok_token_quota))
 const grokBilling = computed(() => usageInfo.value?.grok_billing || null)
-const grokWeeklyBillingBar = computed((): GrokQuotaBarInfo | null => {
+const grokWeeklyBillingBar = computed(() => {
   const billing = grokBilling.value
   if (billing?.period_type?.toLowerCase() !== 'weekly' || billing.usage_percent == null) {
     return null
@@ -1117,13 +1086,10 @@ const grokFreeTokenBar = computed(() => {
 })
 const grokQuotaUnknown = computed(() => {
   if (props.account.platform !== 'grok') return false
-  if (grokBilling.value || grokFreeTokenBar.value || grokRequestQuotaBar.value || grokTokenQuotaBar.value) return false
-  return usageInfo.value?.grok_quota_snapshot_state !== 'observed'
+  return !grokWeeklyBillingBar.value && !grokFreeTokenBar.value
 })
 const grokQuotaUnknownLabel = computed(() => {
-  return usageInfo.value?.grok_quota_snapshot_state === 'no_headers'
-    ? t('admin.accounts.usageWindow.grokNoHeaders')
-    : t('admin.accounts.usageWindow.grokUnknown')
+  return t('admin.accounts.usageWindow.grokUnknown')
 })
 const grokQuotaStatusLine = computed(() => {
   if (props.account.platform !== 'grok') return null

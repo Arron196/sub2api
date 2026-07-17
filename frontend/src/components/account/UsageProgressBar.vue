@@ -49,6 +49,7 @@
 
       <!-- Reset time -->
       <span v-if="shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
+        <template v-if="resetLabel">{{ resetLabel }} </template>
         {{ formatResetTime }}
       </span>
     </div>
@@ -66,6 +67,7 @@ const props = defineProps<{
   label: string
   utilization: number // Percentage (0-100+)
   resetsAt?: string | null
+  resetLabel?: string
   color: 'indigo' | 'emerald' | 'purple' | 'amber'
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
