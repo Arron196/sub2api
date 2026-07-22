@@ -163,6 +163,15 @@ func runMainServer() {
 		}
 	}
 
+	if app.Telegram != nil {
+		telegramCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		err := app.Telegram.Start(telegramCtx)
+		cancel()
+		if err != nil {
+			log.Printf("Warning: Telegram startup reconciliation did not reach ready state")
+		}
+	}
+
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -291,9 +291,15 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageDownloadService := service.NewBatchImageDownloadService(batchImageRepository, accountRepository, batchImageDownloadLimiter, configConfig)
 	batchImageCleanupService := service.ProvideBatchImageCleanupService(batchImageRepository, accountRepository, configConfig)
 	batchImageHandler := handler.ProvideBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService, openAIGatewayHandler)
+	telegramAdminBindingRepository := repository.NewTelegramAdminRepository(db)
+	telegramStateRepository := repository.NewTelegramStateRepository(redisClient)
+	telegramBotAPIFactory := repository.NewTelegramBotClientFactory()
+	telegramGroupRateMutationRepository := repository.NewTelegramGroupRateMutationRepository(db)
+	telegramBotService := service.NewManagedTelegramBotService(configConfig, telegramAdminBindingRepository, telegramStateRepository, telegramBotAPIFactory, settingRepository, secretEncryptor, settingService, userService, auditLogService, adminService, telegramGroupRateMutationRepository, apiKeyAuthCacheInvalidator)
+	telegramHandler := handler.NewTelegramHandler(telegramBotService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
-	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, asyncImageHandler, batchImageHandler, idempotencyCoordinator, idempotencyCleanupService)
+	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, asyncImageHandler, batchImageHandler, telegramHandler, idempotencyCoordinator, idempotencyCleanupService)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService, settingService, auditLogService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService, auditLogService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
@@ -319,6 +325,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	application := &Application{
 		Server:      httpServer,
 		PromptAudit: promptService,
+		Telegram:    telegramBotService,
 		Cleanup:     v,
 	}
 	return application, nil
@@ -329,6 +336,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 type Application struct {
 	Server      *http.Server
 	PromptAudit *securityaudit.PromptService
+	Telegram    *service.TelegramBotService
 	Cleanup     func()
 }
 
