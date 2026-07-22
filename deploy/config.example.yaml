@@ -1145,6 +1145,19 @@ turnstile:
   required: false
 
 # =============================================================================
+# Telegram Bot Configuration (Optional)
+# Telegram 机器人配置（可选）
+# =============================================================================
+# Bot Tokens saved from the admin UI require the fixed totp.encryption_key above.
+# 管理后台保存的 Bot Token 需要先配置上方固定的 totp.encryption_key。
+telegram:
+  enabled: false
+  bot_token: ""
+  bot_username: ""
+  webhook_url: ""
+  webhook_secret: ""
+
+# =============================================================================
 # Gemini OAuth (Required for Gemini accounts)
 # Gemini OAuth 配置（Gemini 账户必需）
 # =============================================================================
