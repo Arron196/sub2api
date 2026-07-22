@@ -65,6 +65,7 @@ func RegisterAdminRoutes(
 
 		// 系统设置
 		registerSettingsRoutes(admin, h)
+		registerTelegramRoutes(admin, h)
 
 		// 数据管理
 		registerDataManagementRoutes(admin, h, stepUpAuth)
@@ -543,6 +544,18 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+	}
+}
+
+func registerTelegramRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	telegram := admin.Group("/telegram")
+	{
+		telegram.GET("/config", h.Telegram.GetConfig)
+		telegram.PUT("/config", h.Telegram.UpdateConfig)
+		telegram.GET("/status", h.Telegram.Status)
+		telegram.POST("/verification-code", h.Telegram.CreateVerificationCode)
+		telegram.DELETE("/verification-code", h.Telegram.CancelVerificationCode)
+		telegram.DELETE("/bindings/:id", h.Telegram.DeleteBinding)
 	}
 }
 

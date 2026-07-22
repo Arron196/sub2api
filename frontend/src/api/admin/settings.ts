@@ -1414,6 +1414,88 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+// ==================== Telegram Bot ====================
+
+export interface TelegramBinding {
+  id: number;
+  telegram_user_id: number;
+  username?: string;
+  display_name?: string;
+  bound_at: string;
+}
+
+export interface TelegramStatus {
+  configured: boolean;
+  enabled: boolean;
+  bot_username: string;
+  webhook_configured: boolean;
+  pending_expires_at: string | null;
+  bindings: TelegramBinding[];
+}
+
+export type TelegramBotConfigSource = "none" | "environment" | "database";
+
+export type TelegramBotLifecycleStatus =
+  | "disabled"
+  | "ready"
+  | "initializing"
+  | "provisioning"
+  | "degraded"
+  | "error";
+
+export interface TelegramBotConfig {
+  enabled: boolean;
+  config_source: TelegramBotConfigSource;
+  token_configured: boolean;
+  bot_username: string;
+  webhook_url: string;
+  webhook_configured: boolean;
+  lifecycle_status: TelegramBotLifecycleStatus;
+}
+
+export interface UpdateTelegramBotConfigRequest {
+  enabled: boolean;
+  bot_token?: string;
+  webhook_url?: string;
+}
+
+export interface TelegramVerificationCode {
+  code: string;
+  expires_at: string;
+}
+
+export async function getTelegramConfig(): Promise<TelegramBotConfig> {
+  const { data } = await apiClient.get<TelegramBotConfig>("/admin/telegram/config");
+  return data;
+}
+
+export async function updateTelegramConfig(
+  payload: UpdateTelegramBotConfigRequest,
+): Promise<TelegramBotConfig> {
+  const { data } = await apiClient.put<TelegramBotConfig>("/admin/telegram/config", payload);
+  return data;
+}
+
+export async function getTelegramStatus(): Promise<TelegramStatus> {
+  const { data } = await apiClient.get<TelegramStatus>("/admin/telegram/status");
+  return data;
+}
+
+export async function generateTelegramVerificationCode(): Promise<TelegramVerificationCode> {
+  const { data } = await apiClient.post<TelegramVerificationCode>(
+    "/admin/telegram/verification-code",
+  );
+  return data;
+}
+
+export async function cancelTelegramVerificationCode(): Promise<void> {
+  await apiClient.delete("/admin/telegram/verification-code");
+}
+
+export async function revokeTelegramBinding(id: number): Promise<void> {
+  await apiClient.delete(`/admin/telegram/bindings/${id}`);
+}
+
 export const settingsAPI = {
   getSettings,
   updateSettings,
@@ -1441,6 +1523,12 @@ export const settingsAPI = {
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,
   resetWebSearchUsage,
+  getTelegramConfig,
+  updateTelegramConfig,
+  getTelegramStatus,
+  generateTelegramVerificationCode,
+  cancelTelegramVerificationCode,
+  revokeTelegramBinding,
 };
 
 export default settingsAPI;
