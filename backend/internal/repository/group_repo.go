@@ -350,6 +350,30 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	return nil
 }
 
+func (r *groupRepository) UpdateRateMultiplier(ctx context.Context, id int64, kind string, multiplier float64) (*service.Group, error) {
+	builder := r.client.Group.UpdateOneID(id)
+	switch kind {
+	case service.TelegramGroupRateKindBase:
+		builder = builder.SetRateMultiplier(multiplier)
+	case service.TelegramGroupRateKindImage:
+		builder = builder.SetImageRateMultiplier(multiplier)
+	case service.TelegramGroupRateKindVideo:
+		builder = builder.SetVideoRateMultiplier(multiplier)
+	case service.TelegramGroupRateKindPeak:
+		builder = builder.SetPeakRateMultiplier(multiplier)
+	default:
+		return nil, service.ErrTelegramPendingInputInvalid
+	}
+	updated, err := builder.Save(ctx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &id, nil); err != nil {
+		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group rate update failed: group=%d err=%v", id, err)
+	}
+	return groupEntityToService(updated), nil
+}
+
 func (r *groupRepository) Delete(ctx context.Context, id int64) error {
 	_, err := r.client.Group.Delete().Where(group.IDEQ(id)).Exec(ctx)
 	if err != nil {
