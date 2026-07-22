@@ -95,6 +95,7 @@ type Config struct {
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
+	Telegram                TelegramConfig                `mapstructure:"telegram"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
@@ -159,6 +160,69 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+}
+
+// TelegramConfig controls the optional Telegram-native admin bot.
+type TelegramConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`
+	BotToken      string `mapstructure:"bot_token"`
+	BotUsername   string `mapstructure:"bot_username"`
+	WebhookURL    string `mapstructure:"webhook_url"`
+	WebhookSecret string `mapstructure:"webhook_secret"`
+}
+
+// Normalize trims operator-provided values without changing secret contents.
+func (c *TelegramConfig) Normalize() {
+	if c == nil {
+		return
+	}
+	c.BotToken = strings.TrimSpace(c.BotToken)
+	c.BotUsername = strings.TrimPrefix(strings.TrimSpace(c.BotUsername), "@")
+	c.WebhookURL = strings.TrimSpace(c.WebhookURL)
+	c.WebhookSecret = strings.TrimSpace(c.WebhookSecret)
+}
+
+// Validate checks only the enabled Telegram subsystem; disabled deployments are unaffected.
+func (c TelegramConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.BotToken == "" {
+		return fmt.Errorf("telegram.bot_token is required when telegram is enabled")
+	}
+	if c.WebhookSecret == "" || len(c.WebhookSecret) > 256 || !isTelegramSafeText(c.WebhookSecret) {
+		return fmt.Errorf("telegram.webhook_secret must contain 1-256 ASCII letters, digits, underscores, or hyphens")
+	}
+	if c.BotUsername != "" && (len(c.BotUsername) < 5 || len(c.BotUsername) > 32 || !isTelegramUsername(c.BotUsername)) {
+		return fmt.Errorf("telegram.bot_username is invalid")
+	}
+	if c.WebhookURL != "" {
+		u, err := url.Parse(c.WebhookURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			return fmt.Errorf("telegram.webhook_url must be an absolute HTTPS URL without user info")
+		}
+	}
+	return nil
+}
+
+func isTelegramSafeText(value string) bool {
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return value != ""
+}
+
+func isTelegramUsername(value string) bool {
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 type IdempotencyConfig struct {
@@ -1680,6 +1744,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
+	cfg.Telegram.Normalize()
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
@@ -2364,6 +2429,11 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+	viper.SetDefault("telegram.enabled", false)
+	viper.SetDefault("telegram.bot_token", "")
+	viper.SetDefault("telegram.bot_username", "")
+	viper.SetDefault("telegram.webhook_url", "")
+	viper.SetDefault("telegram.webhook_secret", "")
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
 	// effective default is true, applied post-unmarshal via a viper.IsSet guard.
@@ -2424,6 +2494,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if err := c.Telegram.Validate(); err != nil {
+		return err
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
