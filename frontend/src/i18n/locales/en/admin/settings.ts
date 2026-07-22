@@ -10,6 +10,7 @@ export default {
         users: 'Users',
         gateway: 'Gateway',
         email: 'Email',
+        telegram: 'Telegram',
         backup: 'Backup',
         payment: 'Payment',
       },
@@ -842,6 +843,112 @@ export default {
         keyWarning: 'This key will only be shown once. Please copy it now.',
         securityWarning: 'Warning: This key provides full admin access. Keep it secure.',
         usage: 'Usage: Add to request header - x-api-key: <your-admin-api-key>'
+      },
+      telegram: {
+        title: 'Telegram Bot',
+        description: 'Configure the Telegram bot, administrator verification codes, and bindings.',
+        botUsername: 'Bot',
+        openBot: 'Open bot',
+        configuration: {
+          title: 'Runtime configuration',
+          description: 'Apply Telegram bot changes without restarting the service.',
+          enabled: 'Enabled',
+          disabled: 'Disabled',
+          token: 'Bot Token',
+          tokenPlaceholder: 'Enter a replacement token',
+          tokenConfigured: 'Token configured',
+          tokenNotConfigured: 'Token not configured',
+          tokenKeepWarning: 'Leave this field blank to keep the current token.',
+          webhookUrl: 'Public webhook URL',
+          webhookPlaceholder: 'https://example.com/api/v1/telegram/webhook',
+          webhookHelp: 'Use a public HTTPS URL ending in /api/v1/telegram/webhook.',
+          source: 'Configuration source',
+           sourceUnknown: 'Unknown',
+           sources: {
+             none: 'Not configured',
+             database: 'Database',
+             environment: 'Environment'
+           },
+          lifecycle: 'Lifecycle state',
+          lifecycleUnknown: 'Unknown',
+          lifecycleStates: {
+             ready: 'Ready',
+             disabled: 'Disabled',
+             initializing: 'Initializing',
+             provisioning: 'Provisioning',
+             degraded: 'Degraded',
+             error: 'Error',
+             starting: 'Starting',
+             stopped: 'Stopped'
+          },
+          disableConfirmTitle: 'Disable Telegram bot',
+          disableConfirmMessage: 'Disable the Telegram bot? Existing bindings will remain available and can still be revoked.',
+          disable: 'Disable bot'
+        },
+        status: {
+          unconfigured: 'Bot is not configured',
+          unconfiguredHint: 'Configure the Telegram bot on the server before creating verification codes.',
+          disabled: 'Bot is disabled',
+          disabledHint: 'Enable the Telegram bot on the server before creating verification codes.',
+          tokenMissing: 'Bot Token is not configured',
+          tokenMissingHint: 'Configure a Bot Token before enabling the Telegram bot.',
+          webhookMissing: 'Webhook is not configured',
+          webhookMissingHint: 'Configure the Telegram webhook on the server before creating verification codes.',
+          ready: 'Bot is ready',
+          readyHint: 'Generate a verification code to bind a Telegram account.'
+        },
+        verification: {
+          title: 'Verification code',
+          instruction: 'Open a private chat with the bot and send this 15-character alphanumeric code. Each temporary code is single-use and expires automatically.',
+          code: 'Code',
+          pending: 'A temporary code is already active. Requesting a new code will invalidate it.',
+          expired: 'The temporary code is no longer active. It is single-use and expires automatically.'
+        },
+        actions: {
+          generate: 'Generate code',
+          generating: 'Generating...',
+          regenerate: 'Generate new code',
+          cancel: 'Cancel code',
+          cancelling: 'Cancelling...',
+          copyCode: 'Copy code',
+          fillCurrentDomain: 'Use current domain',
+          revoke: 'Revoke binding',
+          revoking: 'Revoking...',
+          save: 'Save configuration',
+          saving: 'Saving...'
+        },
+        bindings: {
+          title: 'Current bindings',
+          description: 'Telegram accounts that can access administrator bot operations.',
+          empty: 'No Telegram accounts are currently bound.',
+          telegramId: 'Telegram ID: {id}',
+          boundAt: 'Bound: {time}',
+          unnamed: 'Telegram account'
+        },
+        confirm: {
+          title: 'Revoke Telegram binding',
+          message: 'Revoke this Telegram account binding? It will no longer be able to use administrator bot operations.'
+        },
+        success: {
+          codeGenerated: 'Verification code generated',
+          codeCancelled: 'Verification code cancelled',
+          codeCopied: 'Verification code copied',
+          bindingRevoked: 'Telegram binding revoked',
+          configurationSaved: 'Telegram bot configuration saved'
+        },
+        errors: {
+          load: 'Unable to load Telegram bot status',
+          loadConfig: 'Unable to load Telegram bot configuration',
+          save: 'Unable to save Telegram bot configuration',
+          TELEGRAM_CONFIG_INVALID: 'The Bot Token or public webhook URL is invalid',
+          TELEGRAM_CONFIG_BUSY: 'Another Telegram configuration update is in progress. Try again shortly.',
+          SECRET_ENCRYPTION_KEY_NOT_CONFIGURED: 'Configure a fixed TOTP_ENCRYPTION_KEY on the server before saving the Bot Token',
+          tokenRequired: 'A Bot Token is required before enabling the Telegram bot',
+          webhookRequired: 'A public webhook URL is required before enabling the Telegram bot',
+          generate: 'Unable to generate a verification code',
+          cancel: 'Unable to cancel the verification code',
+          revoke: 'Unable to revoke the Telegram binding'
+        }
       },
       soraS3: {
         title: 'Sora Storage',

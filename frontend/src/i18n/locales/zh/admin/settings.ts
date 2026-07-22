@@ -10,6 +10,7 @@ export default {
         users: '用户默认值',
         gateway: '网关服务',
         email: '邮件设置',
+        telegram: 'Telegram',
         backup: '数据备份',
         payment: '支付设置',
       },
@@ -836,6 +837,112 @@ export default {
         keyWarning: '此密钥仅显示一次，请立即复制保存。',
         securityWarning: '警告：此密钥拥有完整的管理员权限，请妥善保管。',
         usage: '使用方法：在请求头中添加 x-api-key: <your-admin-api-key>'
+      },
+      telegram: {
+        title: 'Telegram 机器人',
+        description: '配置 Telegram 机器人、管理员验证码和绑定。',
+        botUsername: '机器人',
+        openBot: '打开机器人',
+        configuration: {
+          title: '运行配置',
+          description: '无需重启服务即可应用 Telegram 机器人变更。',
+          enabled: '已启用',
+          disabled: '已禁用',
+          token: '机器人 Token',
+          tokenPlaceholder: '输入新的 Token',
+          tokenConfigured: 'Token 已配置',
+          tokenNotConfigured: 'Token 未配置',
+          tokenKeepWarning: '留空可保留当前 Token。',
+          webhookUrl: '公开 Webhook URL',
+          webhookPlaceholder: 'https://example.com/api/v1/telegram/webhook',
+          webhookHelp: '请使用以 /api/v1/telegram/webhook 结尾的公开 HTTPS URL。',
+          source: '配置来源',
+           sourceUnknown: '未知',
+           sources: {
+             none: '未配置',
+             database: '数据库',
+             environment: '环境变量'
+           },
+          lifecycle: '生命周期状态',
+          lifecycleUnknown: '未知',
+          lifecycleStates: {
+             ready: '就绪',
+             disabled: '已禁用',
+             initializing: '初始化中',
+             provisioning: '配置中',
+             degraded: '降级',
+             error: '错误',
+             starting: '启动中',
+             stopped: '已停止'
+          },
+          disableConfirmTitle: '禁用 Telegram 机器人',
+          disableConfirmMessage: '确定禁用 Telegram 机器人吗？现有绑定将保留，且仍可解除绑定。',
+          disable: '禁用机器人'
+        },
+        status: {
+          unconfigured: '机器人尚未配置',
+          unconfiguredHint: '请先在服务器上配置 Telegram 机器人，再生成验证码。',
+          disabled: '机器人已禁用',
+          disabledHint: '请先在服务器上启用 Telegram 机器人，再生成验证码。',
+          tokenMissing: '机器人 Token 尚未配置',
+          tokenMissingHint: '请先配置机器人 Token，再启用 Telegram 机器人。',
+          webhookMissing: 'Webhook 尚未配置',
+          webhookMissingHint: '请先在服务器上配置 Telegram Webhook，再生成验证码。',
+          ready: '机器人已就绪',
+          readyHint: '生成验证码以绑定 Telegram 账户。'
+        },
+        verification: {
+          title: '验证码',
+          instruction: '打开与机器人的私聊并发送此 15 位字母数字验证码。每个临时验证码仅可使用一次，并会自动过期。',
+          code: '验证码',
+          pending: '已有临时验证码处于有效状态。请求新验证码将使其失效。',
+          expired: '临时验证码已失效。每个验证码仅可使用一次，并会自动过期。'
+        },
+        actions: {
+          generate: '生成验证码',
+          generating: '生成中...',
+          regenerate: '生成新验证码',
+          cancel: '取消验证码',
+          cancelling: '取消中...',
+          copyCode: '复制验证码',
+          fillCurrentDomain: '填入当前域名',
+          revoke: '解除绑定',
+          revoking: '解除中...',
+          save: '保存配置',
+          saving: '保存中...'
+        },
+        bindings: {
+          title: '当前绑定',
+          description: '可使用管理员机器人操作的 Telegram 账户。',
+          empty: '当前没有已绑定的 Telegram 账户。',
+          telegramId: 'Telegram ID：{id}',
+          boundAt: '绑定时间：{time}',
+          unnamed: 'Telegram 账户'
+        },
+        confirm: {
+          title: '解除 Telegram 绑定',
+          message: '确定解除此 Telegram 账户绑定吗？解除后该账户将无法使用管理员机器人操作。'
+        },
+        success: {
+          codeGenerated: '验证码已生成',
+          codeCancelled: '验证码已取消',
+          codeCopied: '验证码已复制',
+          bindingRevoked: 'Telegram 绑定已解除',
+          configurationSaved: 'Telegram 机器人配置已保存'
+        },
+        errors: {
+          load: '无法加载 Telegram 机器人状态',
+          loadConfig: '无法加载 Telegram 机器人配置',
+          save: '无法保存 Telegram 机器人配置',
+          TELEGRAM_CONFIG_INVALID: '机器人 Token 或公开 Webhook URL 无效',
+          TELEGRAM_CONFIG_BUSY: '另一项 Telegram 配置更新正在进行，请稍后重试',
+          SECRET_ENCRYPTION_KEY_NOT_CONFIGURED: '请先在服务器配置固定的 TOTP_ENCRYPTION_KEY，再保存机器人 Token',
+          tokenRequired: '启用 Telegram 机器人前必须配置机器人 Token',
+          webhookRequired: '启用 Telegram 机器人前必须填写公开 Webhook URL',
+          generate: '无法生成验证码',
+          cancel: '无法取消验证码',
+          revoke: '无法解除 Telegram 绑定'
+        }
       },
       soraS3: {
         title: 'Sora 存储配置',
