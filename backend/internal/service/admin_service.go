@@ -38,6 +38,7 @@ type AdminService interface {
 	// ordered by sort_order then id. Used by the API Key group filter dropdown.
 	GetAllGroupsIncludingInactive(ctx context.Context) ([]Group, error)
 	GetGroup(ctx context.Context, id int64) (*Group, error)
+	UpdateGroupRateMultiplier(ctx context.Context, id int64, kind string, multiplier float64) (*Group, error)
 	GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error)
 	CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error)
 	// DuplicateGroup creates an inactive independent copy of a group's configuration

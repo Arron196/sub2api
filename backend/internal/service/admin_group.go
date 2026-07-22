@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -45,6 +46,48 @@ func (s *adminServiceImpl) GetAllGroupsIncludingInactive(ctx context.Context) ([
 
 func (s *adminServiceImpl) GetGroup(ctx context.Context, id int64) (*Group, error) {
 	return s.groupRepo.GetByID(ctx, id)
+}
+
+func (s *adminServiceImpl) UpdateGroupRateMultiplier(ctx context.Context, id int64, kind string, multiplier float64) (*Group, error) {
+	if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+		return nil, errors.New("rate multiplier must be finite")
+	}
+	group, err := s.groupRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case TelegramGroupRateKindBase:
+		if multiplier <= 0 {
+			return nil, errors.New("rate_multiplier must be > 0")
+		}
+	case TelegramGroupRateKindImage:
+		if !supportsTelegramImageRate(group.Platform) || !group.ImageRateIndependent || multiplier < 0 {
+			return nil, errors.New("image rate multiplier is not editable")
+		}
+	case TelegramGroupRateKindVideo:
+		if group.Platform != PlatformGrok || !group.VideoRateIndependent || multiplier < 0 {
+			return nil, errors.New("video rate multiplier is not editable")
+		}
+	case TelegramGroupRateKindPeak:
+		if !group.IsSubscriptionType() || !group.PeakRateEnabled || multiplier < 0 {
+			return nil, errors.New("peak rate multiplier is not editable")
+		}
+	default:
+		return nil, errors.New("unsupported rate multiplier kind")
+	}
+	groupRateRepo, ok := s.groupRepo.(GroupRateMultiplierRepository)
+	if !ok {
+		return nil, errors.New("group rate multiplier repository is unavailable")
+	}
+	group, err = groupRateRepo.UpdateRateMultiplier(ctx, id, kind, multiplier)
+	if err != nil {
+		return nil, err
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
+	}
+	return group, nil
 }
 
 func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error) {
