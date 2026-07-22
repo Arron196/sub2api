@@ -7555,13 +7555,23 @@
         </div>
         <!-- /Tab: Email -->
 
+        <!-- Tab: Telegram -->
+        <div
+          v-show="activeTab === 'telegram'"
+          class="telegram-settings-panel"
+          role="region"
+          :aria-label="t('admin.settings.tabs.telegram')"
+        >
+          <TelegramBotSettings />
+        </div>
+
         <!-- Tab: Backup -->
         <div v-show="activeTab === 'backup'">
           <BackupSettings />
         </div>
 
         <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <div v-show="activeTab !== 'telegram' && activeTab !== 'backup'" class="flex justify-end">
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -7680,6 +7690,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import TelegramBotSettings from "@/views/admin/settings/TelegramBotSettings.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
@@ -7739,6 +7750,7 @@ type SettingsTab =
   | "gateway"
   | "payment"
   | "email"
+  | "telegram"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
@@ -7750,6 +7762,7 @@ const settingsTabs = [
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
+  { key: "telegram" as SettingsTab, icon: "link" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
 ];
 
@@ -11623,6 +11636,17 @@ watch(
 .settings-tab-label {
   @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap leading-none;
 }
+
+.telegram-settings-panel {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 2rem);
+}
+
+@media (max-width: 640px) {
+  .telegram-settings-panel {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 6rem);
+  }
+}
+
 </style>
 
 <style>
