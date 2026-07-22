@@ -123,6 +123,15 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
 
       # =======================================================================
+      # Telegram Bot Configuration (optional)
+      # =======================================================================
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+
+      # =======================================================================
       # Gemini OAuth Configuration (for Gemini accounts)
       # =======================================================================
       - GEMINI_OAUTH_CLIENT_ID=${GEMINI_OAUTH_CLIENT_ID:-}
