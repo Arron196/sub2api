@@ -286,6 +286,11 @@ func (s *stubAdminService) GetGroup(ctx context.Context, id int64) (*service.Gro
 	return &group, nil
 }
 
+func (s *stubAdminService) UpdateGroupRateMultiplier(ctx context.Context, id int64, kind string, multiplier float64) (*service.Group, error) {
+	group := service.Group{ID: id, Name: "group", Status: service.StatusActive, RateMultiplier: multiplier}
+	return &group, nil
+}
+
 func (s *stubAdminService) GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error) {
 	if platform == service.PlatformOpenAI {
 		return []string{"gpt-5.5", "gpt-5.4"}, nil

@@ -46,11 +46,16 @@ type GroupDuplicateRepository interface {
 	CreateFromSource(ctx context.Context, group *Group, sourceGroupID int64) error
 }
 
+type GroupRateMultiplierRepository interface {
+	UpdateRateMultiplier(ctx context.Context, id int64, kind string, multiplier float64) (*Group, error)
+}
+
 // AdminGroupRepository makes the group-duplication write capability an explicit
 // admin-service dependency without widening gateway-only group test doubles.
 type AdminGroupRepository interface {
 	GroupRepository
 	GroupDuplicateRepository
+	GroupRateMultiplierRepository
 }
 
 // GroupSortOrderUpdate 分组排序更新
