@@ -183,7 +183,12 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			err = validateAgentOperationSemantics(operation.Method, path, normalizedValidationBody)
 		}
 		if err == nil && !containsAgentPlanReference(normalizedNodeBody) {
-			err = s.validateAgentCrossResourceSemantics(ctx, actor, operation, normalizedNodeBody)
+			handledByPlan, planErr := validateAgentPlanCrossResourceTransition(input.Nodes, inputNode, normalizedNodeBody)
+			if planErr != nil {
+				err = planErr
+			} else if !handledByPlan {
+				err = s.validateAgentCrossResourceSemantics(ctx, actor, operation, normalizedNodeBody)
+			}
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("node %s payload is invalid: %w", inputNode.ID, err)
@@ -242,6 +247,59 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 		}
 	}
 	return plan, pending, nil
+}
+
+func validateAgentPlanCrossResourceTransition(nodes []agentPlanNodeArgument, current agentPlanNodeArgument, normalizedBody any) (bool, error) {
+	switch current.EndpointKey {
+	case "POST:/admin/subscriptions/assign", "POST:/admin/subscriptions/bulk-assign":
+	default:
+		return false, nil
+	}
+	body, _ := normalizedBody.(map[string]any)
+	groupID := agentInputString(body["group_id"])
+	if groupID == "" {
+		return false, nil
+	}
+	byID := make(map[string]agentPlanNodeArgument, len(nodes))
+	for _, node := range nodes {
+		byID[node.ID] = node
+	}
+	ancestors := make(map[string]bool)
+	var visit func(string)
+	visit = func(nodeID string) {
+		for _, dependency := range byID[nodeID].DependsOn {
+			if ancestors[dependency] {
+				continue
+			}
+			ancestors[dependency] = true
+			visit(dependency)
+		}
+	}
+	visit(current.ID)
+	plannedType := ""
+	plannedNode := ""
+	for _, node := range nodes {
+		if !ancestors[node.ID] || node.EndpointKey != "PUT:/admin/groups/:id" || agentInputString(node.PathParams["id"]) != groupID {
+			continue
+		}
+		nodeBody, _ := node.Body.(map[string]any)
+		subscriptionType := strings.ToLower(agentInputString(nodeBody["subscription_type"]))
+		if subscriptionType == "" {
+			continue
+		}
+		if plannedType != "" && plannedType != subscriptionType {
+			return true, fmt.Errorf("node %s has conflicting dependency updates for group %s subscription_type", current.ID, groupID)
+		}
+		plannedType = subscriptionType
+		plannedNode = node.ID
+	}
+	if plannedType == "" {
+		return false, nil
+	}
+	if plannedType != "subscription" {
+		return true, fmt.Errorf("node %s requires dependency node %s to leave group %s as subscription_type=subscription", current.ID, plannedNode, groupID)
+	}
+	return true, nil
 }
 
 func validateAgentPlanBusinessSemantics(nodes []agentPlanNodeArgument) error {

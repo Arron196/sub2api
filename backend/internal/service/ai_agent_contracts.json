@@ -10172,7 +10172,8 @@
         },
         "validity_days": {
           "maximum": "36500",
-          "type": "integer"
+          "type": "integer",
+          "default": 30
         }
       },
       "required": [
@@ -10202,7 +10203,8 @@
         },
         "validity_days": {
           "maximum": "36500",
-          "type": "integer"
+          "type": "integer",
+          "default": 30
         }
       },
       "required": [

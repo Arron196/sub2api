@@ -1134,6 +1134,7 @@ func (s *AIAgentService) complete(ctx context.Context, config AIAgentConfig, key
 
 const agentSystemPrompt = `You are the built-in Sub2API administration Agent. Answer in the administrator's language.
 You may only use operations supplied in the local audited candidates or returned by search_admin_operations. Never invent an endpoint key or arbitrary URL. Never claim that an administrative capability or standalone operation is unavailable until you have checked the supplied candidates and, when necessary, searched the audited catalog for that exact capability.
+User allowed_groups grants access to exclusive groups; it does not create a subscription. Subscription assignment uses the audited subscription assignment operation and requires a group whose subscription_type is subscription. When the administrator clearly refers to the same existing standard group, convert that group and assign the subscription in one dependency plan instead of asking whether to create another group.
 For independent batch writes or writes where a later operation consumes an ID created by an earlier operation, use plan_admin_operations once instead of issuing unrelated execute calls. Prefer one audited native batch operation when the catalog supplies an exact semantic match. Give every plan node a short unique id, declare dependencies, and reference only allow-listed outputs with {"$ref":"node_id.resource_id"} or {"$ref":"node_id.resource_name"}. Use continue_independent for independent batch work, stop_on_failure for dependent work, or rollback_on_failure when completed reversible nodes should be compensated. Do not use a plan for one ordinary operation or for unrelated commands that share no batch intent. If a submitted plan is invalid, repair and resubmit the whole plan; never fall back to executing its write nodes separately because the runtime blocks that unsafe downgrade.
 Each user message may contain locally ranked audited plans. When an intent's first candidate has high confidence and uniquely matches it, execute that candidate directly without another catalog search. When candidates are absent, ambiguous, or semantically different, you must call search_admin_operations with the exact unresolved business capability before claiming it is unsupported. Search results are nested by resource Skill and include request-contract projections plus a compact operation_manifest for the primary Skill. A candidate with body_fields_truncated=true is not a complete contract. Before claiming that a field is unavailable, call search_admin_operations with endpoint_key to inspect that operation's complete body_field_contracts, query_field_contracts, and path_contract; if the body contract is too large or nested, call it again with the exact body field path. Expand a Skill once and inspect its manifest before searching again; reuse cached candidate details for equivalent queries. Search again only for a materially different capability that is not represented in the expanded manifest. Never repeat or paraphrase an equivalent search in one run.
 Resolve uncertainty autonomously from the conversation, local candidates, and exact target lookups whenever possible. Ask the administrator only when resource type remains ambiguous, a name has zero or multiple exact matches, or materially different writes are still possible. If the planning context says resource clarification is required, do not call any tool; ask one concise resource question. For multiple intents, complete them in order. You may issue multiple independent tool calls in one response. In supervised mode, multiple writes are queued and confirmed one at a time.
@@ -1395,13 +1396,19 @@ func (s *AIAgentService) agentPlanningContextWithHint(prompt, resourceHint strin
 func (s *AIAgentService) agentPlanningContextWithHints(prompt, resourceHint, intentHint string) (string, string) {
 	clauses := agentIntentClauses(prompt)
 	intentContexts := agentIntentContexts(prompt, clauses, resourceHint, intentHint)
+	workflowPrefix := ""
+	if workflows := agentWorkflowSkillHints(strings.TrimSpace(prompt + " " + intentHint)); len(workflows) > 0 {
+		if encoded, err := json.Marshal(workflows); err == nil {
+			workflowPrefix = "[Matched audited workflow Skills]\n" + string(encoded) + "\nUse this workflow before broad catalog search. Its operations are audited catalog entries; inspect exact contracts only when field details are needed.\n\n"
+		}
+	}
 	for index, clause := range clauses {
 		intentContext := intentContexts[index]
 		if ambiguity := s.agentResourceAmbiguity(intentContext); ambiguity != nil {
 			ambiguity["intent"] = clause
 			encoded, _ := json.Marshal(ambiguity)
 			reason := fmt.Sprintf("意图 %q：%s", clause, ambiguity["message"])
-			return "[Resource clarification required; tools are disabled for this turn]\n" + string(encoded) +
+			return workflowPrefix + "[Resource clarification required; tools are disabled for this turn]\n" + string(encoded) +
 				"\nAsk one concise clarification question. Do not search or execute an operation.\n\n[User message]\n" + prompt, reason
 		}
 	}
@@ -1429,7 +1436,7 @@ func (s *AIAgentService) agentPlanningContextWithHints(prompt, resourceHint, int
 		plans = append(plans, map[string]any{"intent": clause, "candidates": summaries})
 	}
 	if len(plans) == 0 {
-		return "[No sufficiently relevant local operation candidate]\nCall search_admin_operations with the exact unresolved business capability before answering or claiming that it is unsupported.\n\n[User message]\n" + prompt, ""
+		return workflowPrefix + "[No sufficiently relevant local operation candidate]\nCall search_admin_operations with the exact unresolved business capability before answering or claiming that it is unsupported.\n\n[User message]\n" + prompt, ""
 	}
 	encoded, err := json.Marshal(plans)
 	if err != nil {
@@ -1439,7 +1446,7 @@ func (s *AIAgentService) agentPlanningContextWithHints(prompt, resourceHint, int
 	if allHigh {
 		instruction = "Each intent has a high-confidence local match. Execute those matches directly without calling search_admin_operations. Complete multiple intents in order; independent reads may share one model tool-call round."
 	}
-	return "[Local audited operation plans]\n" + string(encoded) + "\n" + instruction + "\n\n[User message]\n" + prompt, ""
+	return workflowPrefix + "[Local audited operation plans]\n" + string(encoded) + "\n" + instruction + "\n\n[User message]\n" + prompt, ""
 }
 
 func agentInheritedResourceHint(clause, resourceHint string) string {
@@ -1690,6 +1697,9 @@ func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, 
 	if len(operation.PathParams) > 0 {
 		result["path_params"] = operation.PathParams
 		result["path_contract"] = compactAgentSchemaField(operation.PathSchema)
+	}
+	if rules := agentOperationBusinessRules(operation); len(rules) > 0 {
+		result["business_rules"] = rules
 	}
 	if queryProperties, ok := operation.QuerySchema["properties"].(map[string]any); ok && len(queryProperties) > 0 {
 		queryContracts := make(map[string]any, len(queryProperties))
@@ -2100,6 +2110,53 @@ func (s *AIAgentService) suggestOperations(query string, limit int) []agentSugge
 	return result
 }
 
+func agentWorkflowSkillHints(prompt string) []map[string]any {
+	normalized := strings.ToLower(prompt)
+	workflows := make([]map[string]any, 0, 2)
+	if strings.Contains(normalized, "订阅") || strings.Contains(normalized, "subscription") {
+		workflows = append(workflows, map[string]any{
+			"skill": "user_subscription_assignment", "semantics": "A subscription is separate from user.allowed_groups.",
+			"operations":   []string{"GET:/admin/users", "GET:/admin/groups", "PUT:/admin/groups/:id", "POST:/admin/subscriptions/assign"},
+			"precondition": "The assigned group must have subscription_type=subscription.",
+			"existing_standard_group_plan": []map[string]any{
+				{"id": "convert_group", "endpoint_key": "PUT:/admin/groups/:id", "body": map[string]any{"subscription_type": "subscription"}},
+				{"id": "assign_subscription", "endpoint_key": "POST:/admin/subscriptions/assign", "depends_on": []string{"convert_group"}},
+			},
+			"decision_rule": "When the conversation already identifies one exact existing group, convert and assign that group. Do not propose a new group unless the administrator asks for one.",
+		})
+	}
+	mentionsGroupAssignment := (strings.Contains(normalized, "分组") || strings.Contains(normalized, "group")) &&
+		(strings.Contains(normalized, "分配") || strings.Contains(normalized, "assign")) &&
+		(strings.Contains(normalized, "用户") || strings.Contains(normalized, "user"))
+	if mentionsGroupAssignment {
+		workflows = append(workflows, map[string]any{
+			"skill": "user_group_access", "semantics": "Set user.allowed_groups to grant access to an exclusive group; this does not assign a subscription.",
+			"operations": []string{"POST:/admin/users", "PUT:/admin/users/:id"},
+		})
+	}
+	return workflows
+}
+
+func agentOperationBusinessRules(operation AgentCatalogOperation) []map[string]any {
+	switch operation.Key {
+	case "POST:/admin/users", "PUT:/admin/users/:id":
+		return []map[string]any{{
+			"field": "allowed_groups", "meaning": "Grants the user access to exclusive groups; this is not a subscription assignment.",
+		}}
+	case "POST:/admin/subscriptions/assign", "POST:/admin/subscriptions/bulk-assign":
+		return []map[string]any{
+			{"precondition": "group_id must identify a group with subscription_type=subscription"},
+			{"existing_standard_group_workflow": []string{"PUT:/admin/groups/:id set subscription_type=subscription", operation.Key + " depends on the group update"}, "instruction": "Submit both writes as one complete dependency plan."},
+		}
+	case "POST:/admin/groups", "PUT:/admin/groups/:id":
+		return []map[string]any{{
+			"field": "subscription_type", "meaning": "Use subscription when this group will back user subscriptions; standard groups can still be granted through user.allowed_groups.",
+		}}
+	default:
+		return nil
+	}
+}
+
 func agentOperationCapability(operation AgentCatalogOperation) string {
 	action := strings.TrimSpace(operation.Title)
 	if action == "" {
@@ -2131,6 +2188,9 @@ func agentOperationSummary(candidate agentSuggestedOperation) map[string]any {
 	if len(operation.PathParams) > 0 {
 		summary["path_params"] = operation.PathParams
 		summary["path_contract"] = compactAgentSchemaField(operation.PathSchema)
+	}
+	if rules := agentOperationBusinessRules(operation); len(rules) > 0 {
+		summary["business_rules"] = rules
 	}
 	if queryProperties, ok := operation.QuerySchema["properties"].(map[string]any); ok && len(queryProperties) > 0 {
 		queryFields := make([]string, 0, len(queryProperties))
@@ -3473,6 +3533,20 @@ func agentPositiveNumericValue(value any) bool {
 }
 
 func normalizeAgentOperationBody(method, path string, body any) (any, error) {
+	if method == http.MethodPost && (path == "/admin/subscriptions/assign" || path == "/admin/subscriptions/bulk-assign") {
+		payload, ok := body.(map[string]any)
+		if !ok {
+			return nil, errors.New("subscription assignment body must be a JSON object")
+		}
+		normalized := make(map[string]any, len(payload)+1)
+		for key, value := range payload {
+			normalized[key] = value
+		}
+		if !agentPositiveNumericValue(normalized["validity_days"]) {
+			normalized["validity_days"] = 30
+		}
+		return normalized, nil
+	}
 	if method != http.MethodPost || path != "/admin/accounts" {
 		return body, nil
 	}

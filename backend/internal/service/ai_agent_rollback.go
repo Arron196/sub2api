@@ -23,12 +23,6 @@ const (
 
 func (s *AIAgentService) recoverMissingAgentPlanRollbacks(session *aiAgentSession) bool {
 	recoveredAny := false
-	existingPlans := make(map[string]bool)
-	for _, rollback := range session.rollbacks {
-		if rollback.PlanID != "" {
-			existingPlans[rollback.PlanID] = true
-		}
-	}
 	for _, message := range session.model {
 		if message.Role != "tool" || message.Name != "plan_admin_operations" {
 			continue
@@ -37,10 +31,7 @@ func (s *AIAgentService) recoverMissingAgentPlanRollbacks(session *aiAgentSessio
 			Status string               `json:"status"`
 			Plan   AIAgentExecutionPlan `json:"plan"`
 		}
-		if json.Unmarshal([]byte(modelMessageText(message.Content)), &result) != nil || result.Plan.ID == "" || existingPlans[result.Plan.ID] {
-			continue
-		}
-		if result.Status != "error" && result.Plan.Status != "failed" && result.Plan.Status != "partial_failure" && result.Plan.Status != "stopped" {
+		if json.Unmarshal([]byte(modelMessageText(message.Content)), &result) != nil || result.Plan.ID == "" {
 			continue
 		}
 		children := make([]AIAgentRollback, 0)
@@ -74,12 +65,40 @@ func (s *AIAgentService) recoverMissingAgentPlanRollbacks(session *aiAgentSessio
 			})
 		}
 		if recovered := finalizeAgentPlanRollbacks(&result.Plan, children); len(recovered) > 0 {
+			before := agentPlanRollbackChildCount(session.rollbacks, result.Plan.ID)
 			session.rollbacks = appendAgentRollbacks(session.rollbacks, recovered)
-			existingPlans[result.Plan.ID] = true
-			recoveredAny = true
+			after := agentPlanRollbackChildCount(session.rollbacks, result.Plan.ID)
+			if after > before {
+				reopenCompletedAgentPlanRollback(session.rollbacks, result.Plan.ID)
+				recoveredAny = true
+			}
 		}
 	}
 	return recoveredAny
+}
+
+func reopenCompletedAgentPlanRollback(rollbacks []AIAgentRollback, planID string) {
+	for index := range rollbacks {
+		rollback := &rollbacks[index]
+		if rollback.PlanID != planID || rollback.Strategy != agentRollbackStrategyPlan || rollback.Status != "completed" {
+			continue
+		}
+		rollback.Status = "available"
+		rollback.Resolution = ""
+		rollback.CompletedAt = nil
+		rollback.Error = "Additional compensation was recovered from the audited execution history; review the rollback again."
+		rollback.UpdatedAt = time.Now()
+		return
+	}
+}
+
+func agentPlanRollbackChildCount(rollbacks []AIAgentRollback, planID string) int {
+	for _, rollback := range rollbacks {
+		if rollback.PlanID == planID && rollback.Strategy == agentRollbackStrategyPlan {
+			return len(rollback.Children)
+		}
+	}
+	return 0
 }
 
 func recoverInterruptedAgentRollbacks(rollbacks []AIAgentRollback) {
@@ -431,7 +450,8 @@ func (s *AIAgentService) findAgentDeleteCompensation(collectionPath string, reso
 			continue
 		}
 		title := strings.ToLower(operation.Title)
-		if strings.Contains(title, "创建") || strings.Contains(title, "生成") || strings.Contains(title, "duplicate") {
+		if strings.Contains(title, "创建") || strings.Contains(title, "生成") || strings.Contains(title, "duplicate") ||
+			(operation.Module == "subscriptions" && (strings.Contains(title, "分配") || strings.Contains(title, "assign"))) {
 			sourceModule = operation.Module
 		}
 		break

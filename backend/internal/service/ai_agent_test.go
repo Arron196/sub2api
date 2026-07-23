@@ -367,9 +367,41 @@ func TestAIAgentLargeContractsPrioritizeFieldsAndRequireExactInspection(t *testi
 	if !strings.Contains(queryContract, `"query_field_contracts"`) || !strings.Contains(queryContract, `"search":{"maximum":2048,"type":"string"}`) || strings.Contains(queryContract, `"keyword"`) {
 		t.Fatalf("query contract lookup = %s", queryContract)
 	}
+	subscriptionContract := service.inspectAgentOperationContract(session, "POST:/admin/subscriptions/assign", "")
+	if !strings.Contains(subscriptionContract, `"business_rules"`) || !strings.Contains(subscriptionContract, `PUT:/admin/groups/:id set subscription_type=subscription`) {
+		t.Fatalf("subscription workflow contract = %s", subscriptionContract)
+	}
 	correction := agentCapabilityClaimCorrection("更新接口未开放 subscription_type 字段，因此无法修改", 1, 0, 0)
 	if !strings.Contains(correction, "endpoint_key") || !strings.Contains(correction, "body_field_contracts") {
 		t.Fatalf("missing-field claim was not forced through exact contract inspection: %s", correction)
+	}
+}
+
+func TestAIAgentSubscriptionWorkflowSkillAndDefaults(t *testing.T) {
+	workflows := agentWorkflowSkillHints("你这订阅没分配呀，把现有 group 分配给 user")
+	encoded, _ := json.Marshal(workflows)
+	if !strings.Contains(string(encoded), "user_subscription_assignment") || !strings.Contains(string(encoded), "POST:/admin/subscriptions/assign") || !strings.Contains(string(encoded), "PUT:/admin/groups/:id") {
+		t.Fatalf("subscription workflow Skills = %s", encoded)
+	}
+	for _, test := range []struct {
+		name string
+		body map[string]any
+		want int
+	}{
+		{name: "omitted", body: map[string]any{"user_id": float64(4), "group_id": float64(6)}, want: 30},
+		{name: "non-positive", body: map[string]any{"user_id": float64(4), "group_id": float64(6), "validity_days": float64(-1)}, want: 30},
+		{name: "explicit", body: map[string]any{"user_id": float64(4), "group_id": float64(6), "validity_days": float64(60)}, want: 60},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			normalized, err := normalizeAgentOperationBody(http.MethodPost, "/admin/subscriptions/assign", test.body)
+			if err != nil {
+				t.Fatalf("normalizeAgentOperationBody() error = %v", err)
+			}
+			value, _ := agentOptionalNumericValue(normalized.(map[string]any)["validity_days"])
+			if int(value) != test.want {
+				t.Fatalf("validity_days = %v, want %d", value, test.want)
+			}
+		})
 	}
 }
 
@@ -428,6 +460,47 @@ func TestAIAgentPlanAllowsCreatedGroupReferenceInUserAllowedGroups(t *testing.T)
 	groups, _ := userBody["allowed_groups"].([]any)
 	if len(groups) != 1 || !containsAgentPlanReference(groups[0]) {
 		t.Fatalf("stored user group reference = %#v", userBody)
+	}
+}
+
+func TestAIAgentPlanUsesDependencyGroupStateForSubscriptionAssignment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/admin/groups/6" {
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":6,"name":"subscription candidate","platform":"openai","subscription_type":"standard"}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	_, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	internalAuth, _ := NewAgentInternalAuth()
+	service, err := NewAIAgentService(nil, nil, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	service.client = server.Client()
+	nodes := []agentPlanNodeArgument{
+		{ID: "convert_group", EndpointKey: "PUT:/admin/groups/:id", PathParams: map[string]any{"id": float64(6)}, Body: map[string]any{"subscription_type": "subscription"}},
+		{ID: "assign_subscription", EndpointKey: "POST:/admin/subscriptions/assign", DependsOn: []string{"convert_group"}, Body: map[string]any{"user_id": float64(4), "group_id": float64(6)}},
+	}
+	plan, _, err := service.prepareAgentExecutionPlan(context.Background(), AIAgentActor{UserID: 1}, "convert group 6 and assign it to user 4", map[string]bool{"6": true}, agentPlanArguments{
+		Title: "Convert and assign subscription", FailurePolicy: "stop_on_failure", Nodes: nodes,
+	})
+	if err != nil {
+		t.Fatalf("prepareAgentExecutionPlan() error = %v", err)
+	}
+	if plan == nil || len(plan.Nodes) != 2 || plan.Nodes[1].DependsOn[0] != "convert_group" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	withoutDependency := nodes
+	withoutDependency[1].DependsOn = nil
+	if _, _, err := service.prepareAgentExecutionPlan(context.Background(), AIAgentActor{UserID: 1}, "convert group 6 and assign it to user 4", map[string]bool{"6": true}, agentPlanArguments{
+		Title: "Unsafe conversion", FailurePolicy: "stop_on_failure", Nodes: withoutDependency,
+	}); err == nil || !strings.Contains(err.Error(), "subscription group") {
+		t.Fatalf("plan without dependency error = %v", err)
 	}
 }
 
@@ -895,6 +968,38 @@ func TestAIAgentRecoversMissingCreateRollbacksFromFailedPlanHistory(t *testing.T
 	}
 	if service.recoverMissingAgentPlanRollbacks(session) || len(session.rollbacks) != 1 {
 		t.Fatalf("historical recovery was not idempotent: %#v", session.rollbacks)
+	}
+}
+
+func TestAIAgentRecoversMissingSubscriptionCompensationFromSuccessfulPlan(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	now := time.Now()
+	plan := AIAgentExecutionPlan{
+		ID: "successful-subscription-plan", Title: "Convert and assign", Status: "succeeded", FailurePolicy: "stop_on_failure", CreatedAt: now, UpdatedAt: now,
+		Nodes: []AIAgentPlanNode{
+			{ID: "convert", EndpointKey: "PUT:/admin/groups/:id", Operation: "Update group", Resource: "groups", Status: "succeeded"},
+			{ID: "assign", EndpointKey: "POST:/admin/subscriptions/assign", Operation: "Assign subscription", Resource: "subscriptions", Body: map[string]any{"user_id": float64(4), "group_id": float64(6), "validity_days": float64(30)}, Status: "succeeded", Outputs: map[string]any{"resource_id": float64(31)}},
+		},
+	}
+	toolResult, _ := json.Marshal(map[string]any{"status": "succeeded", "plan": plan})
+	session := newAIAgentSession("successful subscription plan")
+	session.model = []agentModelMessage{{Role: "tool", Name: "plan_admin_operations", Content: string(toolResult)}}
+	session.rollbacks = []AIAgentRollback{{
+		ID: "existing-parent", PlanID: plan.ID, Operation: plan.Title, Strategy: agentRollbackStrategyPlan, Status: "completed", CompletedAt: &now,
+		Children:  []AIAgentRollback{{ID: "group-restore", Operation: "Update group", Strategy: agentRollbackStrategyRestore, Method: http.MethodPut, Path: "/admin/groups/6", CreatedAt: now, UpdatedAt: now}},
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	if !service.recoverMissingAgentPlanRollbacks(session) {
+		t.Fatal("successful plan history did not recover missing subscription compensation")
+	}
+	if len(session.rollbacks) != 1 || len(session.rollbacks[0].Children) != 2 || session.rollbacks[0].Children[1].Path != "/admin/subscriptions/31" || session.rollbacks[0].Status != "available" || session.rollbacks[0].CompletedAt != nil {
+		t.Fatalf("recovered subscription rollback = %#v", session.rollbacks)
+	}
+	if service.recoverMissingAgentPlanRollbacks(session) {
+		t.Fatalf("successful plan recovery was not idempotent: %#v", session.rollbacks)
 	}
 }
 
