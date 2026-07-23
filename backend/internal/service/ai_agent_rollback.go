@@ -19,6 +19,67 @@ const (
 	agentRollbackStrategyPlan    = "rollback_plan"
 )
 
+func (s *AIAgentService) recoverMissingAgentPlanRollbacks(session *aiAgentSession) bool {
+	recoveredAny := false
+	existingPlans := make(map[string]bool)
+	for _, rollback := range session.rollbacks {
+		if rollback.PlanID != "" {
+			existingPlans[rollback.PlanID] = true
+		}
+	}
+	for _, message := range session.model {
+		if message.Role != "tool" || message.Name != "plan_admin_operations" {
+			continue
+		}
+		var result struct {
+			Status string               `json:"status"`
+			Plan   AIAgentExecutionPlan `json:"plan"`
+		}
+		if json.Unmarshal([]byte(modelMessageText(message.Content)), &result) != nil || result.Plan.ID == "" || existingPlans[result.Plan.ID] {
+			continue
+		}
+		if result.Status != "error" && result.Plan.Status != "failed" && result.Plan.Status != "partial_failure" && result.Plan.Status != "stopped" {
+			continue
+		}
+		children := make([]AIAgentRollback, 0)
+		for _, node := range result.Plan.Nodes {
+			if node.Status != "succeeded" {
+				continue
+			}
+			operation, exists := s.catalogByKey[node.EndpointKey]
+			resourceID := node.Outputs["resource_id"]
+			if !exists || operation.Method != http.MethodPost || resourceID == nil {
+				continue
+			}
+			deleteOperation, path, ok := s.findAgentDeleteCompensation(operation.Path, resourceID)
+			if !ok {
+				continue
+			}
+			expected := make(map[string]any)
+			if body, ok := node.Body.(map[string]any); ok {
+				for field, value := range body {
+					if !isAgentSensitiveKey(field) && !containsAgentSensitiveInput(value) {
+						expected[field] = cloneAgentValue(value)
+					}
+				}
+			}
+			now := time.Now()
+			children = append(children, AIAgentRollback{
+				ID: uuid.NewString(), Operation: node.Operation, Strategy: agentRollbackStrategyDelete, Status: "available",
+				Resource: node.Resource, TargetLabel: agentInputString(node.Outputs["resource_name"]), TargetID: agentInputString(resourceID),
+				Method: deleteOperation.Method, Path: path, ForwardBody: expected, IdempotencyKey: uuid.NewString(),
+				RequiresStepUp: deleteOperation.RequiresSession, CreatedAt: now, UpdatedAt: now,
+			})
+		}
+		if recovered := finalizeAgentPlanRollbacks(&result.Plan, children); len(recovered) > 0 {
+			session.rollbacks = appendAgentRollbacks(session.rollbacks, recovered)
+			existingPlans[result.Plan.ID] = true
+			recoveredAny = true
+		}
+	}
+	return recoveredAny
+}
+
 func recoverInterruptedAgentRollbacks(rollbacks []AIAgentRollback) {
 	for index := range rollbacks {
 		rollback := &rollbacks[index]

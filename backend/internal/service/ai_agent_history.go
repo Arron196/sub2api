@@ -62,7 +62,13 @@ func newAIAgentSession(title string) *aiAgentSession {
 
 func (s *AIAgentService) ensureConversationsLoaded(ctx context.Context, userID int64) error {
 	s.sessionsMu.Lock()
-	defer s.sessionsMu.Unlock()
+	recoveredRollbacks := false
+	defer func() {
+		s.sessionsMu.Unlock()
+		if recoveredRollbacks {
+			go s.persistConversationsDetached(userID)
+		}
+	}()
 	if s.loaded[userID] {
 		return nil
 	}
@@ -105,6 +111,7 @@ func (s *AIAgentService) ensureConversationsLoaded(ctx context.Context, userID i
 				model: item.Model, public: item.Public, events: item.Events, pending: item.Pending,
 				pendingQueue: item.PendingQueue, rollbacks: item.Rollbacks, observed: observed,
 			}
+			recoveredRollbacks = s.recoverMissingAgentPlanRollbacks(conversation) || recoveredRollbacks
 			if conversation.id != "" {
 				conversations[conversation.id] = conversation
 			}

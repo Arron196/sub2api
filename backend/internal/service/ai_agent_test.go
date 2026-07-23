@@ -52,6 +52,21 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	if requiredContracts != 79 {
 		t.Fatalf("required body contract count = %d, want 79", requiredContracts)
 	}
+	for _, endpointKey := range []string{"POST:/admin/groups", "PUT:/admin/groups/:id"} {
+		properties, _ := service.catalogByKey[endpointKey].BodySchema["properties"].(map[string]any)
+		for _, field := range []string{"daily_limit_usd", "weekly_limit_usd", "monthly_limit_usd"} {
+			fieldSchema, _ := properties[field].(map[string]any)
+			if fieldSchema["type"] != "number" {
+				t.Fatalf("%s %s contract = %#v, want number", endpointKey, field, fieldSchema)
+			}
+			if err := validateAgentBodyContract(fieldSchema, float64(150), "body."+field); err != nil {
+				t.Fatalf("%s numeric limit rejected: %v", field, err)
+			}
+			if err := validateAgentBodyContract(fieldSchema, map[string]any{"value": float64(150)}, "body."+field); err == nil {
+				t.Fatalf("%s object limit unexpectedly accepted", field)
+			}
+		}
+	}
 	for _, forbidden := range []string{
 		"POST:/admin/ai-agent/chat",
 		"POST:/admin/ai-agent/actions/:id/confirm",
@@ -658,6 +673,93 @@ func TestAIAgentExecutionPlanStopsDependentsAndCompensates(t *testing.T) {
 	}
 	if fmt.Sprint(statuses) != fmt.Sprint([]string{"rolled_back", "failed", "blocked"}) {
 		t.Fatalf("plan statuses = %v", statuses)
+	}
+}
+
+func TestAIAgentFailedAutoPlanPersistsCompletedNodeRollbacks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/admin/test/parents":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":31,"name":"Parent"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/admin/test/parents/31":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":31,"name":"Parent"}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/admin/test/children":
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":"rejected"}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	_, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	internalAuth, _ := NewAgentInternalAuth()
+	service, err := NewAIAgentService(nil, nil, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	service.client = server.Client()
+	for _, operation := range []AgentCatalogOperation{
+		{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent"},
+		{Key: "DELETE:/admin/test/parents/:id", Method: http.MethodDelete, Path: "/admin/test/parents/:id", PathParams: []string{"id"}, Title: "Delete parent"},
+		{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child"},
+	} {
+		service.catalogByKey[operation.Key] = operation
+		service.catalog = append(service.catalog, operation)
+	}
+	session := newAIAgentSession("partial plan")
+	call := agentToolCall{Function: agentToolFunction{Name: "plan_admin_operations", Arguments: `{"title":"Partial create","failure_policy":"stop_on_failure","nodes":[{"id":"parent","endpoint_key":"POST:/admin/test/parents","body":{"name":"Parent"}},{"id":"child","endpoint_key":"POST:/admin/test/children","depends_on":["parent"],"body":{"parent_id":{"$ref":"parent.resource_id"}}}]}`}}
+	result := service.executeTool(context.Background(), AIAgentActor{UserID: 1}, session, "create resources", call, true, map[string]string{}, "compact")
+	if !strings.Contains(result, `"status":"error"`) || !strings.Contains(result, `"rollback_available":true`) {
+		t.Fatalf("failed plan result = %s", result)
+	}
+	if len(session.rollbacks) != 1 || session.rollbacks[0].Strategy != agentRollbackStrategyPlan || len(session.rollbacks[0].Children) != 1 {
+		t.Fatalf("failed plan rollbacks = %#v", session.rollbacks)
+	}
+}
+
+func TestAIAgentPartialPlanRollbacksMergeAcrossRetries(t *testing.T) {
+	now := time.Now()
+	child := func(id, path string) AIAgentRollback {
+		return AIAgentRollback{ID: id, Operation: "Create", Strategy: agentRollbackStrategyDelete, Method: http.MethodDelete, Path: path, CreatedAt: now, UpdatedAt: now}
+	}
+	existing := []AIAgentRollback{{ID: "parent", PlanID: "plan-1", Strategy: agentRollbackStrategyPlan, Children: []AIAgentRollback{child("a", "/admin/users/1")}, CreatedAt: now, UpdatedAt: now}}
+	added := []AIAgentRollback{{ID: "duplicate-parent", PlanID: "plan-1", Strategy: agentRollbackStrategyPlan, Children: []AIAgentRollback{child("a-new-id", "/admin/users/1"), child("b", "/admin/groups/2")}, CreatedAt: now, UpdatedAt: now}}
+	merged := appendAgentRollbacks(existing, added)
+	if len(merged) != 1 || merged[0].ID != "parent" || len(merged[0].Children) != 2 {
+		t.Fatalf("merged plan rollbacks = %#v", merged)
+	}
+}
+
+func TestAIAgentRecoversMissingCreateRollbacksFromFailedPlanHistory(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	plan := AIAgentExecutionPlan{
+		ID: "failed-plan", Title: "Create user and group", Status: "failed", FailurePolicy: "stop_on_failure", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Nodes: []AIAgentPlanNode{
+			{ID: "user", EndpointKey: "POST:/admin/users", Operation: "Create user", Resource: "users", Body: map[string]any{"username": "user", "email": "user@example.com", "password": "[REDACTED]"}, Status: "succeeded", Outputs: map[string]any{"resource_id": float64(21), "resource_name": "user"}},
+			{ID: "group", EndpointKey: "POST:/admin/groups", Operation: "Create group", Resource: "groups", Body: map[string]any{"name": "group", "platform": "openai"}, Status: "succeeded", Outputs: map[string]any{"resource_id": float64(22), "resource_name": "group"}},
+			{ID: "limits", EndpointKey: "PUT:/admin/groups/:id", Operation: "Set limits", Resource: "groups", Status: "failed"},
+		},
+	}
+	toolResult, _ := json.Marshal(map[string]any{"status": "error", "plan": plan})
+	session := newAIAgentSession("failed plan")
+	session.model = []agentModelMessage{{Role: "tool", Name: "plan_admin_operations", Content: string(toolResult)}}
+	if !service.recoverMissingAgentPlanRollbacks(session) {
+		t.Fatal("failed plan history did not recover rollbacks")
+	}
+	if len(session.rollbacks) != 1 || session.rollbacks[0].PlanID != plan.ID || len(session.rollbacks[0].Children) != 2 {
+		t.Fatalf("recovered rollbacks = %#v", session.rollbacks)
+	}
+	if session.rollbacks[0].Children[0].Path != "/admin/users/21" || session.rollbacks[0].Children[1].Path != "/admin/groups/22" {
+		t.Fatalf("recovered rollback paths = %#v", session.rollbacks[0].Children)
+	}
+	if service.recoverMissingAgentPlanRollbacks(session) || len(session.rollbacks) != 1 {
+		t.Fatalf("historical recovery was not idempotent: %#v", session.rollbacks)
 	}
 }
 

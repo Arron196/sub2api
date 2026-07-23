@@ -576,6 +576,9 @@ func (s *AIAgentService) runConfirmedAgentPlan(ctx context.Context, actor AIAgen
 		session.events = append([]AIAgentProcessEvent(nil), session.events[len(session.events)-agentMaxProcessEvents:]...)
 	}
 	if err != nil {
+		if recoveryRollbackID == "" {
+			session.rollbacks = appendAgentRollbacks(session.rollbacks, rollbacks)
+		}
 		recoveryStatus := "failed"
 		for _, node := range workingPlan.Nodes {
 			if node.Status == "succeeded" || node.Status == "rollback_failed" {
@@ -769,11 +772,49 @@ func appendAgentRollbacks(existing, added []AIAgentRollback) []AIAgentRollback {
 	if len(added) == 0 {
 		return existing
 	}
-	result := append(append([]AIAgentRollback(nil), added...), existing...)
+	result := append([]AIAgentRollback(nil), existing...)
+	var prepend []AIAgentRollback
+	for _, rollback := range added {
+		merged := false
+		if rollback.PlanID != "" && rollback.Strategy == agentRollbackStrategyPlan {
+			for index := range result {
+				if result[index].PlanID == rollback.PlanID && result[index].Strategy == agentRollbackStrategyPlan {
+					mergeAgentPlanRollback(&result[index], rollback)
+					merged = true
+					break
+				}
+			}
+		}
+		if !merged {
+			prepend = append(prepend, rollback)
+		}
+	}
+	result = append(prepend, result...)
 	if len(result) > 20 {
 		result = result[:20]
 	}
 	return result
+}
+
+func mergeAgentPlanRollback(existing *AIAgentRollback, added AIAgentRollback) {
+	seen := make(map[string]bool, len(existing.Children))
+	for _, child := range existing.Children {
+		seen[agentRollbackMergeKey(child)] = true
+	}
+	for _, child := range added.Children {
+		key := agentRollbackMergeKey(child)
+		if !seen[key] {
+			existing.Children = append(existing.Children, child)
+			seen[key] = true
+		}
+	}
+	existing.Sensitive = existing.Sensitive || added.Sensitive
+	existing.RequiresStepUp = existing.RequiresStepUp || added.RequiresStepUp
+	existing.UpdatedAt = time.Now()
+}
+
+func agentRollbackMergeKey(rollback AIAgentRollback) string {
+	return strings.Join([]string{rollback.Strategy, rollback.Method, rollback.Path, rollback.TargetID, rollback.Operation}, "\x00")
 }
 
 func agentExecutionPlanFingerprint(plan *AIAgentExecutionPlan) string {

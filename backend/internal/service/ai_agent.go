@@ -1251,11 +1251,13 @@ func (s *AIAgentService) executeTool(ctx context.Context, actor AIAgentActor, se
 			return marshalAgentToolResult(agentPlanToolResult("confirmation_queued", plan, len(session.pendingQueue)+1))
 		}
 		result, rollbacks, err := s.executeAgentPlan(ctx, actor, session, plan, firstAgentString(processDisplay))
+		if session.activeRecoveryRollbackID == "" {
+			session.rollbacks = appendAgentRollbacks(session.rollbacks, rollbacks)
+		}
 		if err != nil {
-			return marshalAgentToolResult(map[string]any{"status": "error", "message": err.Error(), "plan": publicAgentExecutionPlan(plan)})
+			return marshalAgentToolResult(map[string]any{"status": "error", "message": err.Error(), "plan": publicAgentExecutionPlan(plan), "result": result, "rollback_available": len(rollbacks) > 0})
 		}
 		completedWrites[fingerprint] = plan.Title + " completed"
-		session.rollbacks = appendAgentRollbacks(session.rollbacks, rollbacks)
 		return marshalAgentToolResult(map[string]any{"status": plan.Status, "plan": publicAgentExecutionPlan(plan), "result": result})
 	case "execute_admin_operation":
 		var arguments agentExecuteArguments

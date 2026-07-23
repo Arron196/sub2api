@@ -2027,8 +2027,8 @@
           "type": "array"
         },
         "daily_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         },
         "default_mapped_model": {
           "type": "string"
@@ -2085,8 +2085,8 @@
           "type": "object"
         },
         "monthly_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         },
         "name": {
           "type": "string"
@@ -2163,8 +2163,8 @@
           "type": "number"
         },
         "weekly_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         }
       },
       "required": [
@@ -4812,8 +4812,8 @@
           "type": "array"
         },
         "daily_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         },
         "default_mapped_model": {
           "type": "string"
@@ -4870,8 +4870,8 @@
           "type": "object"
         },
         "monthly_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         },
         "name": {
           "type": "string"
@@ -4955,8 +4955,8 @@
           "type": "number"
         },
         "weekly_limit_usd": {
-          "properties": {},
-          "type": "object"
+          "type": "number",
+          "minimum": 0
         }
       },
       "type": "object"
