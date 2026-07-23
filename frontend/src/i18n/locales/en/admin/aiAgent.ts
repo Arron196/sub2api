@@ -5,6 +5,8 @@ export default {
     tools: 'audited tools',
     autoMode: 'Automatic',
     supervisedMode: 'Supervised',
+    streamingMode: 'Streaming',
+    nonStreamingMode: 'Non-streaming',
     clear: 'Clear conversation',
     newConversation: 'New conversation',
     history: 'Chat history',

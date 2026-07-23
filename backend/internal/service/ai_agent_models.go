@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -45,7 +46,96 @@ func (s *AIAgentService) sendModelRequest(ctx context.Context, config AIAgentCon
 	return readAgentResponse(response, 4<<20)
 }
 
-func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage) (agentModelMessage, error) {
+func (s *AIAgentService) openAgentModelStream(ctx context.Context, config AIAgentConfig, key, path string, payload any) (*http.Response, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.modelBaseURL(config)+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	setAgentModelHeaders(request, config.Protocol, key)
+	request.Header.Set("Accept", "text/event-stream")
+	response, err := s.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("call Agent model: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
+		_, readErr := readAgentResponse(response, 4<<20)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return nil, fmt.Errorf("upstream returned HTTP %d", response.StatusCode)
+	}
+	return response, nil
+}
+
+func agentSSEData(line string) string {
+	if !strings.HasPrefix(line, "data:") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+}
+
+func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConfig, key string, payload any, onTextDelta func(string)) ([]json.RawMessage, error) {
+	response, err := s.openAgentModelStream(ctx, config, key, "/v1/responses", payload)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	var output []json.RawMessage
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
+	for scanner.Scan() {
+		data := agentSSEData(scanner.Text())
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type     string `json:"type"`
+			Delta    string `json:"delta"`
+			Message  string `json:"message"`
+			Response struct {
+				Output []json.RawMessage `json:"output"`
+			} `json:"response"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(data), &event) != nil {
+			continue
+		}
+		switch event.Type {
+		case "response.output_text.delta", "response.refusal.delta":
+			if event.Delta != "" {
+				onTextDelta(event.Delta)
+			}
+		case "response.completed":
+			output = event.Response.Output
+		case "response.failed", "error":
+			message := event.Error.Message
+			if message == "" {
+				message = event.Message
+			}
+			if message == "" {
+				message = "Agent Responses stream failed"
+			}
+			return nil, errors.New(message)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read Agent Responses stream: %w", err)
+	}
+	if len(output) == 0 {
+		return nil, errors.New("Agent Responses stream ended without a completed response")
+	}
+	return output, nil
+}
+
+func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta func(string)) (agentModelMessage, error) {
 	messages := make([]agentModelMessage, 0, len(history)+1)
 	messages = append(messages, agentModelMessage{Role: "system", Content: agentSystemPrompt})
 	messages = append(messages, history...)
@@ -54,9 +144,13 @@ func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIA
 		"messages":    messages,
 		"tools":       agentTools,
 		"tool_choice": "auto",
+		"stream":      onTextDelta != nil,
 	}
 	if config.ThinkingMode != "" {
 		payload["reasoning_effort"] = config.ThinkingMode
+	}
+	if onTextDelta != nil {
+		return s.streamChatCompletions(ctx, config, key, payload, onTextDelta)
 	}
 	responseBody, err := s.sendModelRequest(ctx, config, key, "/v1/chat/completions", payload)
 	if err != nil {
@@ -69,7 +163,83 @@ func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIA
 	return completion.Choices[0].Message, nil
 }
 
-func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage) (agentModelMessage, error) {
+func (s *AIAgentService) streamChatCompletions(ctx context.Context, config AIAgentConfig, key string, payload any, onTextDelta func(string)) (agentModelMessage, error) {
+	response, err := s.openAgentModelStream(ctx, config, key, "/v1/chat/completions", payload)
+	if err != nil {
+		return agentModelMessage{}, err
+	}
+	defer response.Body.Close()
+	message := agentModelMessage{Role: "assistant"}
+	toolCalls := make(map[int]*agentToolCall)
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
+	for scanner.Scan() {
+		data := agentSSEData(scanner.Text())
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) != nil {
+			continue
+		}
+		if chunk.Error.Message != "" {
+			return agentModelMessage{}, errors.New(chunk.Error.Message)
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				message.Content = modelMessageText(message.Content) + choice.Delta.Content
+				onTextDelta(choice.Delta.Content)
+			}
+			for _, delta := range choice.Delta.ToolCalls {
+				call := toolCalls[delta.Index]
+				if call == nil {
+					call = &agentToolCall{Type: "function"}
+					toolCalls[delta.Index] = call
+				}
+				if delta.ID != "" {
+					call.ID = delta.ID
+				}
+				if delta.Type != "" {
+					call.Type = delta.Type
+				}
+				call.Function.Name += delta.Function.Name
+				call.Function.Arguments += delta.Function.Arguments
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return agentModelMessage{}, fmt.Errorf("read Agent Chat Completions stream: %w", err)
+	}
+	for index := 0; index < len(toolCalls); index++ {
+		if call := toolCalls[index]; call != nil {
+			message.ToolCalls = append(message.ToolCalls, *call)
+		}
+	}
+	if strings.TrimSpace(modelMessageText(message.Content)) == "" && len(message.ToolCalls) == 0 {
+		return agentModelMessage{}, errors.New("Agent Chat Completions stream ended without content")
+	}
+	return message, nil
+}
+
+func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta func(string)) (agentModelMessage, error) {
 	payload := map[string]any{
 		"model":             config.Model,
 		"instructions":      agentSystemPrompt,
@@ -77,24 +247,35 @@ func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentCo
 		"tools":             responsesTools(),
 		"tool_choice":       "auto",
 		"max_output_tokens": 4096,
+		"stream":            onTextDelta != nil,
 	}
 	if config.ThinkingMode != "" {
 		payload["reasoning"] = map[string]any{"effort": config.ThinkingMode, "summary": "auto"}
 		payload["include"] = []string{"reasoning.encrypted_content"}
 	}
-	responseBody, err := s.sendModelRequest(ctx, config, key, "/v1/responses", payload)
-	if err != nil {
-		return agentModelMessage{}, err
+	var output []json.RawMessage
+	if onTextDelta == nil {
+		responseBody, err := s.sendModelRequest(ctx, config, key, "/v1/responses", payload)
+		if err != nil {
+			return agentModelMessage{}, err
+		}
+		var response struct {
+			Output []json.RawMessage `json:"output"`
+		}
+		if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Output) == 0 {
+			return agentModelMessage{}, errors.New("Agent Responses response is invalid")
+		}
+		output = response.Output
+	} else {
+		streamOutput, err := s.streamResponses(ctx, config, key, payload, onTextDelta)
+		if err != nil {
+			return agentModelMessage{}, err
+		}
+		output = streamOutput
 	}
-	var response struct {
-		Output []json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Output) == 0 {
-		return agentModelMessage{}, errors.New("Agent Responses response is invalid")
-	}
-	message := agentModelMessage{Role: "assistant", ResponsesOutput: response.Output}
+	message := agentModelMessage{Role: "assistant", ResponsesOutput: output}
 	var textParts []string
-	for _, raw := range response.Output {
+	for _, raw := range output {
 		var item struct {
 			ID        string          `json:"id"`
 			Type      string          `json:"type"`
@@ -177,7 +358,7 @@ func responsesTools() []map[string]any {
 	return tools
 }
 
-func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage) (agentModelMessage, error) {
+func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta func(string)) (agentModelMessage, error) {
 	maxTokens := 4096
 	payload := map[string]any{
 		"model":       config.Model,
@@ -185,6 +366,7 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 		"messages":    anthropicMessages(history),
 		"tools":       anthropicTools(),
 		"tool_choice": map[string]any{"type": "auto"},
+		"stream":      onTextDelta != nil,
 	}
 	if config.ThinkingMode != "" {
 		if budget, err := strconv.Atoi(config.ThinkingMode); err == nil {
@@ -199,6 +381,9 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 		}
 	}
 	payload["max_tokens"] = maxTokens
+	if onTextDelta != nil {
+		return s.streamMessages(ctx, config, key, payload, onTextDelta)
+	}
 	responseBody, err := s.sendModelRequest(ctx, config, key, "/v1/messages", payload)
 	if err != nil {
 		return agentModelMessage{}, err
@@ -238,6 +423,109 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 	message.Content = strings.Join(textParts, "\n")
 	if len(message.ToolCalls) == 0 && strings.TrimSpace(strings.Join(textParts, "")) == "" {
 		return agentModelMessage{}, errors.New("Agent Messages response contained no text or tool calls")
+	}
+	return message, nil
+}
+
+func (s *AIAgentService) streamMessages(ctx context.Context, config AIAgentConfig, key string, payload any, onTextDelta func(string)) (agentModelMessage, error) {
+	response, err := s.openAgentModelStream(ctx, config, key, "/v1/messages", payload)
+	if err != nil {
+		return agentModelMessage{}, err
+	}
+	defer response.Body.Close()
+	blocks := make(map[int]map[string]any)
+	inputJSON := make(map[int]string)
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
+	for scanner.Scan() {
+		data := agentSSEData(scanner.Text())
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type         string         `json:"type"`
+			Index        int            `json:"index"`
+			ContentBlock map[string]any `json:"content_block"`
+			Delta        struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				Thinking    string `json:"thinking"`
+				Signature   string `json:"signature"`
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(data), &event) != nil {
+			continue
+		}
+		switch event.Type {
+		case "content_block_start":
+			blocks[event.Index] = cloneAgentMap(event.ContentBlock)
+		case "content_block_delta":
+			block := blocks[event.Index]
+			if block == nil {
+				block = make(map[string]any)
+				blocks[event.Index] = block
+			}
+			switch event.Delta.Type {
+			case "text_delta":
+				block["text"] = agentInputString(block["text"]) + event.Delta.Text
+				if event.Delta.Text != "" {
+					onTextDelta(event.Delta.Text)
+				}
+			case "thinking_delta":
+				block["thinking"] = agentInputString(block["thinking"]) + event.Delta.Thinking
+			case "signature_delta":
+				block["signature"] = agentInputString(block["signature"]) + event.Delta.Signature
+			case "input_json_delta":
+				inputJSON[event.Index] += event.Delta.PartialJSON
+			}
+		case "error":
+			if event.Error.Message == "" {
+				event.Error.Message = "Agent Messages stream failed"
+			}
+			return agentModelMessage{}, errors.New(event.Error.Message)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return agentModelMessage{}, fmt.Errorf("read Agent Messages stream: %w", err)
+	}
+	message := agentModelMessage{Role: "assistant"}
+	for index := 0; index < len(blocks); index++ {
+		block := blocks[index]
+		if block == nil {
+			continue
+		}
+		if partial := inputJSON[index]; partial != "" {
+			var input any
+			if json.Unmarshal([]byte(partial), &input) != nil {
+				return agentModelMessage{}, errors.New("Agent Messages tool input stream is invalid")
+			}
+			block["input"] = input
+		}
+		raw, marshalErr := json.Marshal(block)
+		if marshalErr != nil {
+			return agentModelMessage{}, marshalErr
+		}
+		message.AnthropicContent = append(message.AnthropicContent, raw)
+		switch agentInputString(block["type"]) {
+		case "text":
+			text := agentInputString(block["text"])
+			if text != "" {
+				if modelMessageText(message.Content) != "" {
+					message.Content = modelMessageText(message.Content) + "\n"
+				}
+				message.Content = modelMessageText(message.Content) + text
+			}
+		case "tool_use":
+			arguments, _ := json.Marshal(block["input"])
+			message.ToolCalls = append(message.ToolCalls, agentToolCall{ID: agentInputString(block["id"]), Type: "function", Function: agentToolFunction{Name: agentInputString(block["name"]), Arguments: string(arguments)}})
+		}
+	}
+	if strings.TrimSpace(modelMessageText(message.Content)) == "" && len(message.ToolCalls) == 0 {
+		return agentModelMessage{}, errors.New("Agent Messages stream ended without content")
 	}
 	return message, nil
 }

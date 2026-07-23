@@ -105,6 +105,7 @@ type AIAgentConfig struct {
 	CatalogSize         int    `json:"catalog_size"`
 	ContextWindow       string `json:"context_window"`
 	ContextWindowTokens int    `json:"context_window_tokens"`
+	Streaming           bool   `json:"streaming"`
 }
 
 type UpdateAIAgentConfigInput struct {
@@ -133,6 +134,7 @@ type AIAgentMessage struct {
 	Content   string         `json:"content"`
 	Event     string         `json:"event,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	Streaming bool           `json:"streaming,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
 }
 
@@ -398,6 +400,7 @@ func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 		CatalogSize:         len(s.catalog),
 		ContextWindow:       contextWindow,
 		ContextWindowTokens: contextWindowTokens,
+		Streaming:           true,
 	}, nil
 }
 
@@ -818,7 +821,29 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 		}
 		s.persistConversationsDetached(actor.UserID)
 
-		message, err := s.complete(ctx, config, key, history)
+		streamMessageID := uuid.NewString()
+		streamText := ""
+		streamCreated := false
+		lastStreamPersist := time.Time{}
+		onTextDelta := func(delta string) {
+			if delta == "" {
+				return
+			}
+			streamText += delta
+			conversation.mu.Lock()
+			if !streamCreated {
+				conversation.public = append(conversation.public, AIAgentMessage{ID: streamMessageID, RunID: runID, Role: "assistant", Streaming: true, CreatedAt: time.Now()})
+				streamCreated = true
+			}
+			setAgentStreamingMessage(conversation, streamMessageID, redactAgentTextSecrets(streamText), true)
+			conversation.updatedAt = time.Now()
+			conversation.mu.Unlock()
+			if time.Since(lastStreamPersist) >= 750*time.Millisecond {
+				lastStreamPersist = time.Now()
+				s.persistConversationsDetached(actor.UserID)
+			}
+		}
+		message, err := s.complete(ctx, config, key, history, onTextDelta)
 		retryHistory := history
 		for attempt, targetPercent := range []int{70, 50, 35} {
 			if err == nil || !isAgentContextWindowError(err) {
@@ -842,9 +867,18 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 			})
 			conversation.mu.Unlock()
 			s.persistConversationsDetached(actor.UserID)
-			message, err = s.complete(ctx, config, key, retryHistory)
+			conversation.mu.Lock()
+			removeAgentStreamingMessage(conversation, streamMessageID)
+			conversation.mu.Unlock()
+			streamMessageID = uuid.NewString()
+			streamText = ""
+			streamCreated = false
+			message, err = s.complete(ctx, config, key, retryHistory, onTextDelta)
 		}
 		if err != nil {
+			conversation.mu.Lock()
+			setAgentStreamingMessage(conversation, streamMessageID, redactAgentTextSecrets(streamText), false)
+			conversation.mu.Unlock()
 			s.finishChat(actor.UserID, conversation, config.ProcessDisplay, err)
 			return
 		}
@@ -861,6 +895,7 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 				return
 			}
 			if correction := agentCapabilityClaimCorrection(content, len(conversation.capabilitySearches), len(conversation.inspectedContracts), conversation.capabilityCorrections); correction != "" && round+1 < agentMaxToolRounds {
+				removeAgentStreamingMessage(conversation, streamMessageID)
 				conversation.capabilityCorrections++
 				conversation.model = append(conversation.model, agentModelMessage{Role: "user", Content: correction})
 				appendAgentEvent(conversation, config.ProcessDisplay, "capability_corrected", "Required audited capability verification", nil, map[string]any{"round": round + 1})
@@ -868,7 +903,11 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 				s.persistConversationsDetached(actor.UserID)
 				continue
 			}
-			conversation.public = append(conversation.public, AIAgentMessage{ID: uuid.NewString(), RunID: runID, Role: "assistant", Content: redactAgentTextSecrets(content), CreatedAt: time.Now()})
+			if streamCreated {
+				setAgentStreamingMessage(conversation, streamMessageID, redactAgentTextSecrets(content), false)
+			} else {
+				conversation.public = append(conversation.public, AIAgentMessage{ID: uuid.NewString(), RunID: runID, Role: "assistant", Content: redactAgentTextSecrets(content), CreatedAt: time.Now()})
+			}
 			conversation.status = agentConversationStatusIdle
 			conversation.updatedAt = time.Now()
 			appendAgentEvent(conversation, config.ProcessDisplay, "completed", "", nil, map[string]any{"duration_ms": time.Since(runStarted).Milliseconds()})
@@ -876,6 +915,13 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 			conversation.mu.Unlock()
 			s.persistConversationsDetached(actor.UserID)
 			return
+		}
+		if streamCreated {
+			if strings.TrimSpace(streamText) == "" {
+				removeAgentStreamingMessage(conversation, streamMessageID)
+			} else {
+				setAgentStreamingMessage(conversation, streamMessageID, redactAgentTextSecrets(streamText), false)
+			}
 		}
 		conversation.mu.Unlock()
 
@@ -912,6 +958,25 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 		}
 	}
 	s.finishChat(actor.UserID, conversation, config.ProcessDisplay, errors.New("Agent exceeded the tool-call round limit"))
+}
+
+func setAgentStreamingMessage(conversation *aiAgentSession, messageID, content string, streaming bool) {
+	for index := range conversation.public {
+		if conversation.public[index].ID == messageID {
+			conversation.public[index].Content = content
+			conversation.public[index].Streaming = streaming
+			return
+		}
+	}
+}
+
+func removeAgentStreamingMessage(conversation *aiAgentSession, messageID string) {
+	for index := range conversation.public {
+		if conversation.public[index].ID == messageID {
+			conversation.public = append(conversation.public[:index], conversation.public[index+1:]...)
+			return
+		}
+	}
 }
 
 func (s *AIAgentService) finishChat(userID int64, conversation *aiAgentSession, processDisplay string, err error) {
@@ -1028,14 +1093,18 @@ func trimAgentHistory(session *aiAgentSession) {
 	}
 }
 
-func (s *AIAgentService) complete(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage) (agentModelMessage, error) {
+func (s *AIAgentService) complete(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta ...func(string)) (agentModelMessage, error) {
+	var stream func(string)
+	if len(onTextDelta) > 0 {
+		stream = onTextDelta[0]
+	}
 	switch config.Protocol {
 	case agentProtocolChatCompletions:
-		return s.completeChatCompletions(ctx, config, key, history)
+		return s.completeChatCompletions(ctx, config, key, history, stream)
 	case agentProtocolResponses:
-		return s.completeResponses(ctx, config, key, history)
+		return s.completeResponses(ctx, config, key, history, stream)
 	case agentProtocolMessages:
-		return s.completeMessages(ctx, config, key, history)
+		return s.completeMessages(ctx, config, key, history, stream)
 	default:
 		return agentModelMessage{}, errors.New("unsupported Agent model protocol")
 	}

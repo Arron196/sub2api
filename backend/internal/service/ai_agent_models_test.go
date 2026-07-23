@@ -89,6 +89,55 @@ func TestAIAgentModelProtocols(t *testing.T) {
 	}
 }
 
+func TestAIAgentModelProtocolsStreamText(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		path     string
+		stream   string
+	}{
+		{
+			name: "chat completions", protocol: agentProtocolChatCompletions, path: "/v1/chat/completions",
+			stream: "data: {\"choices\":[{\"delta\":{\"content\":\"chat \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+		},
+		{
+			name: "responses", protocol: agentProtocolResponses, path: "/v1/responses",
+			stream: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses \"}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"responses ok\"}]}]}}\n\n",
+		},
+		{
+			name: "messages", protocol: agentProtocolMessages, path: "/v1/messages",
+			stream: "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"messages \"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != test.path || request.Header.Get("Accept") != "text/event-stream" {
+					t.Errorf("stream request path=%q accept=%q", request.URL.Path, request.Header.Get("Accept"))
+				}
+				var body map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["stream"] != true {
+					t.Errorf("stream request body=%#v err=%v", body, err)
+				}
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = writer.Write([]byte(test.stream))
+			}))
+			defer server.Close()
+			service := &AIAgentService{client: server.Client()}
+			var deltas strings.Builder
+			message, err := service.complete(context.Background(), AIAgentConfig{BaseURL: server.URL, Model: "test-model", Protocol: test.protocol}, "model-key", []agentModelMessage{{Role: "user", Content: "hello"}}, func(delta string) {
+				deltas.WriteString(delta)
+			})
+			if err != nil {
+				t.Fatalf("complete stream: %v", err)
+			}
+			if !strings.Contains(deltas.String(), "ok") || !strings.Contains(modelMessageText(message.Content), "ok") {
+				t.Fatalf("stream deltas=%q message=%q", deltas.String(), modelMessageText(message.Content))
+			}
+		})
+	}
+}
+
 func TestResponsesPreservesReasoningItemsAcrossToolCalls(t *testing.T) {
 	reasoning := json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"}`)
 	functionCall := json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"search_admin_operations","arguments":"{\"query\":\"users\"}"}`)

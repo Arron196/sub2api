@@ -13,6 +13,7 @@ export interface AIAgentConfig {
   catalog_size: number
   context_window: string
   context_window_tokens: number
+  streaming: boolean
 }
 
 export interface AIAgentMessage {
@@ -22,6 +23,7 @@ export interface AIAgentMessage {
   content: string
   event?: string
   metadata?: Record<string, unknown>
+  streaming?: boolean
   created_at: string
 }
 

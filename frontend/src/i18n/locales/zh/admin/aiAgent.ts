@@ -5,6 +5,8 @@ export default {
     tools: '个已审计工具',
     autoMode: '全自动',
     supervisedMode: '监督模式',
+    streamingMode: '流式',
+    nonStreamingMode: '非流式',
     clear: '清空对话',
     newConversation: '新建对话',
     history: '聊天记录',

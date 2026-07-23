@@ -15,6 +15,9 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <span :class="['badge', config?.streaming ? 'badge-success' : 'badge-warning']">
+              {{ config?.streaming ? t('admin.aiAgent.streamingMode') : t('admin.aiAgent.nonStreamingMode') }}
+            </span>
             <span :class="['badge', config?.auto_approve ? 'badge-warning' : 'badge-success']">
               {{ config?.auto_approve ? t('admin.aiAgent.autoMode') : t('admin.aiAgent.supervisedMode') }}
             </span>
@@ -56,7 +59,7 @@
                   <Icon name="sparkles" size="sm" />
                 </div>
                 <div :class="['max-w-[min(760px,85%)] whitespace-pre-wrap break-words rounded-lg px-4 py-3 text-sm leading-6', item.message.role === 'user' ? 'bg-gray-900 text-white shadow-sm dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-100 bg-gray-50/80 text-gray-800 dark:border-dark-700/70 dark:bg-dark-800/70 dark:text-dark-200']">
-                  {{ messageContent(item.message) }}
+                  {{ messageContent(item.message) }}<span v-if="item.message.streaming" class="agent-stream-cursor" aria-hidden="true"></span>
                 </div>
               </article>
 
@@ -80,7 +83,7 @@
               </details>
             </template>
 
-            <div v-if="busy" class="agent-message flex items-center gap-3 text-sm text-gray-500 dark:text-dark-400" role="status" aria-live="polite">
+            <div v-if="busy && !hasStreamingMessage" class="agent-message flex items-center gap-3 text-sm text-gray-500 dark:text-dark-400" role="status" aria-live="polite">
               <div class="agent-thinking-avatar flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-emerald-600 shadow-sm" aria-hidden="true">
                 <span class="agent-thinking-bars"><span></span><span></span><span></span></span>
               </div>
@@ -424,6 +427,7 @@ const conversationStatus = ref<AIAgentConversationStatus>('idle')
 const prompt = ref('')
 const busy = computed(() => conversationStatus.value === 'running' || conversationStatus.value === 'stopping')
 const confirmationReady = computed(() => conversationStatus.value === 'idle')
+const hasStreamingMessage = computed(() => messages.value.some(message => message.streaming))
 type MessageFlowItem = { key: string; message?: AIAgentMessage; processEvents?: AIAgentProcessEvent[]; open?: boolean }
 const messageFlow = computed<MessageFlowItem[]>(() => {
   const messageRunKeys = new Map<string, string>()
@@ -574,7 +578,7 @@ function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer)
   const hasRunningConversation = conversations.value.some(item => item.status === 'running' || item.status === 'stopping')
   if (!busy.value && !hasRunningConversation) return
-  pollTimer = setTimeout(pollAgentState, 900)
+  pollTimer = setTimeout(pollAgentState, busy.value ? 250 : 900)
 }
 
 async function pollAgentState() {
@@ -1178,6 +1182,16 @@ onUnmounted(() => {
   animation-delay: 240ms;
 }
 
+.agent-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: agent-cursor 800ms steps(1, end) infinite;
+}
+
 .agent-thinking-dots {
   display: inline-flex;
   width: 22px;
@@ -1235,6 +1249,11 @@ onUnmounted(() => {
   }
 }
 
+@keyframes agent-cursor {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
 @keyframes agent-dot {
   0%, 60%, 100% {
     transform: translateY(0);
@@ -1251,7 +1270,8 @@ onUnmounted(() => {
   .agent-mark--active,
   .agent-thinking-avatar,
   .agent-thinking-bars > span,
-  .agent-thinking-dots > span {
+  .agent-thinking-dots > span,
+  .agent-stream-cursor {
     animation: none;
   }
 }

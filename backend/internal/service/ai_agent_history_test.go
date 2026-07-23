@@ -84,6 +84,21 @@ func (aiAgentTestEncryptor) Decrypt(value string) (string, error) {
 	return value[len(prefix):], nil
 }
 
+func writeAgentChatStream(writer http.ResponseWriter, payload string) {
+	var completion agentCompletionResponse
+	if json.Unmarshal([]byte(payload), &completion) != nil || len(completion.Choices) == 0 {
+		panic("invalid test chat completion")
+	}
+	message := completion.Choices[0].Message
+	toolCalls := make([]map[string]any, 0, len(message.ToolCalls))
+	for index, call := range message.ToolCalls {
+		toolCalls = append(toolCalls, map[string]any{"index": index, "id": call.ID, "type": call.Type, "function": call.Function})
+	}
+	delta, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"role": message.Role, "content": message.Content, "tool_calls": toolCalls}}}})
+	writer.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(writer, "data: %s\n\ndata: [DONE]\n\n", delta)
+}
+
 func newAIAgentHistoryTestService(t *testing.T, settings *aiAgentMemorySettings, server *httptest.Server) *AIAgentService {
 	t.Helper()
 	settings.mu.Lock()
@@ -150,10 +165,10 @@ func TestAIAgentHighConfidenceCandidateExecutesWithoutCatalogSearch(t *testing.T
 		mu.Unlock()
 		writer.Header().Set("Content-Type", "application/json")
 		if call == 1 {
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"direct_1","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/accounts\",\"body\":{\"name\":\"Fast OpenAI\",\"platform\":\"openai\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-test-candidate-secret\"}}}"}}]}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"direct_1","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/accounts\",\"body\":{\"name\":\"Fast OpenAI\",\"platform\":\"openai\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-test-candidate-secret\"}}}"}}]}}]}`)
 			return
 		}
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"账号创建操作已准备，等待确认。"}}]}`))
+		writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"账号创建操作已准备，等待确认。"}}]}`)
 	}))
 	defer server.Close()
 
@@ -217,10 +232,10 @@ func TestAIAgentMultiIntentModelRunQueuesMultipleWrites(t *testing.T) {
 		mu.Unlock()
 		writer.Header().Set("Content-Type", "application/json")
 		if call == 1 {
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"multi_1","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/groups\",\"body\":{\"name\":\"Alpha\"}}"}},{"id":"multi_2","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/accounts\",\"body\":{\"name\":\"Beta\",\"platform\":\"openai\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-test-multi-secret\"}}}"}}]}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"multi_1","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/groups\",\"body\":{\"name\":\"Alpha\"}}"}},{"id":"multi_2","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/accounts\",\"body\":{\"name\":\"Beta\",\"platform\":\"openai\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-test-multi-secret\"}}}"}}]}}]}`)
 			return
 		}
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"两个操作已按顺序等待确认。"}}]}`))
+		writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"两个操作已按顺序等待确认。"}}]}`)
 	}))
 	defer server.Close()
 
@@ -289,12 +304,12 @@ func TestAIAgentProviderContextErrorCompressesAndRetries(t *testing.T) {
 		mu.Unlock()
 		switch call {
 		case 1:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"checkpoint-call","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/test/context-checkpoint\",\"body\":{\"name\":\"created-before-compression\"}}"}}]}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"checkpoint-call","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"POST:/admin/test/context-checkpoint\",\"body\":{\"name\":\"created-before-compression\"}}"}}]}}]}`)
 		case 2, 3, 4:
 			writer.WriteHeader(http.StatusBadRequest)
 			_, _ = writer.Write([]byte(`{"error":{"message":"maximum context length exceeded"}}`))
 		default:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"context retry completed"}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"context retry completed"}}]}`)
 		}
 	}))
 	defer server.Close()
@@ -369,11 +384,11 @@ func TestAIAgentUnsupportedCapabilityClaimForcesNestedSkillSearch(t *testing.T) 
 		writer.Header().Set("Content-Type", "application/json")
 		switch call {
 		case 1:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"目前没有合适的接口支持这个管理能力。"}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"目前没有合适的接口支持这个管理能力。"}}]}`)
 		case 2:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"skill-search","type":"function","function":{"name":"search_admin_operations","arguments":"{\"query\":\"生成未使用的兑换码\"}"}}]}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"skill-search","type":"function","function":{"name":"search_admin_operations","arguments":"{\"query\":\"生成未使用的兑换码\"}"}}]}}]}`)
 		default:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"已通过审计 Skill 索引找到候选接口。"}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"已通过审计 Skill 索引找到候选接口。"}}]}`)
 		}
 	}))
 	defer server.Close()
@@ -423,11 +438,11 @@ func TestAIAgentMissingFieldClaimForcesExactContractInspection(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch call {
 		case 1:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"更新接口未开放 subscription_type 字段，因此无法修改。"}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"更新接口未开放 subscription_type 字段，因此无法修改。"}}]}`)
 		case 2:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"contract-inspection","type":"function","function":{"name":"search_admin_operations","arguments":"{\"endpoint_key\":\"PUT:/admin/groups/:id\"}"}}]}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"contract-inspection","type":"function","function":{"name":"search_admin_operations","arguments":"{\"endpoint_key\":\"PUT:/admin/groups/:id\"}"}}]}}]}`)
 		default:
-			_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"已核对完整合同，更新接口支持 subscription_type。"}}]}`))
+			writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"已核对完整合同，更新接口支持 subscription_type。"}}]}`)
 		}
 	}))
 	defer server.Close()
@@ -487,11 +502,11 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 			call := modelCalls
 			mu.Unlock()
 			if call == 1 {
-				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-read","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"GET:/admin/accounts/:id\",\"path_params\":{\"id\":3}}"}}]}}]}`))
+				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-read","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"GET:/admin/accounts/:id\",\"path_params\":{\"id\":3}}"}}]}}]}`)
 			} else if call == 2 {
-				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-write","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"PUT:/admin/accounts/:id\",\"path_params\":{\"id\":3},\"body\":{\"concurrency\":5}}"}}]}}]}`))
+				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-write","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"PUT:/admin/accounts/:id\",\"path_params\":{\"id\":3},\"body\":{\"concurrency\":5}}"}}]}}]}`)
 			} else {
-				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"恢复方案已经生成，等待管理员确认。"}}]}`))
+				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"恢复方案已经生成，等待管理员确认。"}}]}`)
 			}
 		default:
 			writer.WriteHeader(http.StatusNotFound)
@@ -566,12 +581,50 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 	}
 }
 
+func TestAIAgentStreamingMessageIsVisibleBeforeCompletion(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial \"}}]}\n\n"))
+		writer.(http.Flusher).Flush()
+		<-release
+		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	service := newAIAgentHistoryTestService(t, settings, server)
+	conversation, err := service.CreateConversation(context.Background(), 52)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	if _, err := service.StartChat(context.Background(), AIAgentActor{UserID: 52}, conversation.Conversation.ID, "stream this"); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var partial AIAgentSessionSnapshot
+	for time.Now().Before(deadline) {
+		partial, _ = service.Session(context.Background(), 52, conversation.Conversation.ID)
+		if len(partial.Messages) == 2 && partial.Messages[1].Streaming {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(partial.Messages) != 2 || !partial.Messages[1].Streaming || partial.Messages[1].Content != "partial " || partial.Conversation.Status != agentConversationStatusRunning {
+		t.Fatalf("partial streaming snapshot = %#v", partial)
+	}
+	close(release)
+	completed := waitForConversationStatus(t, service, 52, conversation.Conversation.ID, agentConversationStatusIdle)
+	if len(completed.Messages) != 2 || completed.Messages[1].Streaming || completed.Messages[1].Content != "partial answer" {
+		t.Fatalf("completed streaming snapshot = %#v", completed.Messages)
+	}
+}
+
 func TestAIAgentBackgroundChatSurvivesRequestCancellationAndPersists(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		<-release
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"completed after refresh"}}]}`))
+		writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"completed after refresh"}}]}`)
 	}))
 	defer server.Close()
 	settings := &aiAgentMemorySettings{values: make(map[string]string)}

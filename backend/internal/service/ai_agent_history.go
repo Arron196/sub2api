@@ -87,6 +87,9 @@ func (s *AIAgentService) ensureConversationsLoaded(ctx context.Context, userID i
 			if status == agentConversationStatusRunning || status == agentConversationStatusStopping {
 				status = agentConversationStatusStopped
 				errorMessage = "The server restarted before this response completed."
+				for index := range item.Public {
+					item.Public[index].Streaming = false
+				}
 				if item.Pending != nil && item.Pending.Plan != nil && item.Pending.Plan.Status == "running" {
 					item.Pending.Plan.Status = "stopped"
 					item.Pending.Plan.UpdatedAt = time.Now()
