@@ -29,11 +29,14 @@ func TestAIAgentModelProtocols(t *testing.T) {
 		},
 		{
 			name: "responses", protocol: agentProtocolResponses, thinkingMode: "xhigh", path: "/v1/responses",
-			response: `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"responses ok"}]}]}`,
+			response: `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"responses ok"}]}],"usage":{"input_tokens":2048,"input_tokens_details":{"cached_tokens":1024}}}`,
 			assertBody: func(t *testing.T, body map[string]any) {
 				reasoning, _ := body["reasoning"].(map[string]any)
 				if reasoning["effort"] != "xhigh" {
 					t.Errorf("reasoning.effort = %#v", reasoning["effort"])
+				}
+				if key, _ := body["prompt_cache_key"].(string); !strings.HasPrefix(key, "sub2api-agent-") {
+					t.Errorf("prompt_cache_key = %#v", body["prompt_cache_key"])
 				}
 			},
 		},
@@ -70,6 +73,11 @@ func TestAIAgentModelProtocols(t *testing.T) {
 					t.Errorf("decode request: %v", err)
 				}
 				test.assertBody(t, body)
+				if test.protocol != agentProtocolResponses {
+					if _, exists := body["prompt_cache_key"]; exists {
+						t.Errorf("%s request unexpectedly enabled Responses cache", test.protocol)
+					}
+				}
 				writer.Header().Set("Content-Type", "application/json")
 				_, _ = writer.Write([]byte(test.response))
 			}))
@@ -84,6 +92,9 @@ func TestAIAgentModelProtocols(t *testing.T) {
 			}
 			if text := modelMessageText(message.Content); !strings.Contains(text, "ok") {
 				t.Fatalf("content = %q", text)
+			}
+			if test.protocol == agentProtocolResponses && (message.InputTokens != 2048 || message.CachedInputTokens != 1024) {
+				t.Fatalf("Responses cache usage = input:%d cached:%d", message.InputTokens, message.CachedInputTokens)
 			}
 		})
 	}
@@ -135,6 +146,18 @@ func TestAIAgentModelProtocolsStreamText(t *testing.T) {
 				t.Fatalf("stream deltas=%q message=%q", deltas.String(), modelMessageText(message.Content))
 			}
 		})
+	}
+}
+
+func TestResponsesPromptCacheKeyIsStableAndModelScoped(t *testing.T) {
+	first := agentResponsesPromptCacheKey("gpt-5.6")
+	second := agentResponsesPromptCacheKey("gpt-5.6")
+	otherModel := agentResponsesPromptCacheKey("gpt-5.6-luna")
+	if first == "" || first != second || first == otherModel {
+		t.Fatalf("cache keys first=%q second=%q other=%q", first, second, otherModel)
+	}
+	if strings.Contains(first, "gpt") || len(first) > 64 {
+		t.Fatalf("cache key exposes model or is unbounded: %q", first)
 	}
 }
 

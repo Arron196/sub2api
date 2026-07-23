@@ -52,6 +52,9 @@ describe('AI Agent admin integration', () => {
     expect(view).toContain("case 'context_compressed'")
     expect(view).toContain("config?.streaming ? t('admin.aiAgent.streamingMode')")
     expect(api).toContain('streaming: boolean')
+    expect(api).toContain('response_cache: boolean')
+    expect(view).toContain("t('admin.aiAgent.responseCache')")
+    expect(view).toContain("t('admin.aiAgent.cacheHit'")
   })
 
   it('supports persistent history, process display, and stopping a running response', () => {

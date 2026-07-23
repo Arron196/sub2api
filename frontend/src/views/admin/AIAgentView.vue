@@ -15,6 +15,9 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <span v-if="config?.response_cache" class="badge badge-success">
+              {{ t('admin.aiAgent.responseCache') }}
+            </span>
             <span :class="['badge', config?.streaming ? 'badge-success' : 'badge-warning']">
               {{ config?.streaming ? t('admin.aiAgent.streamingMode') : t('admin.aiAgent.nonStreamingMode') }}
             </span>
@@ -920,6 +923,7 @@ function processEventMetadata(event: AIAgentProcessEvent): string[] {
   if (metadata.context_before !== undefined && metadata.context_after !== undefined) items.push(`${metadata.context_before} → ${metadata.context_after} tokens`)
   if (metadata.retry_attempt) items.push(`retry ${metadata.retry_attempt}`)
   if (metadata.context_window) items.push(String(metadata.context_window))
+  if (metadata.cache_enabled) items.push(metadata.cache_hit ? t('admin.aiAgent.cacheHit', { tokens: Number(metadata.cached_units || 0) }) : t('admin.aiAgent.cacheMiss'))
   if (metadata.duration_ms !== undefined) items.push(formatDuration(metadata.duration_ms))
   return items.filter(Boolean)
 }

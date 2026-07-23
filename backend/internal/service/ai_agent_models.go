@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,14 +80,14 @@ func agentSSEData(line string) string {
 	return strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 }
 
-func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConfig, key string, payload any, onTextDelta func(string)) ([]json.RawMessage, error) {
+func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConfig, key string, payload any, onTextDelta func(string)) (agentResponsesResult, error) {
 	response, err := s.openAgentModelStream(ctx, config, key, "/v1/responses", payload)
 	if err != nil {
-		return nil, err
+		return agentResponsesResult{}, err
 	}
 	defer response.Body.Close()
 
-	var output []json.RawMessage
+	var result agentResponsesResult
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 	for scanner.Scan() {
@@ -100,6 +101,12 @@ func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConf
 			Message  string `json:"message"`
 			Response struct {
 				Output []json.RawMessage `json:"output"`
+				Usage  struct {
+					InputTokens       int `json:"input_tokens"`
+					InputTokenDetails struct {
+						CachedTokens int `json:"cached_tokens"`
+					} `json:"input_tokens_details"`
+				} `json:"usage"`
 			} `json:"response"`
 			Error struct {
 				Message string `json:"message"`
@@ -114,7 +121,7 @@ func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConf
 				onTextDelta(event.Delta)
 			}
 		case "response.completed":
-			output = event.Response.Output
+			result = agentResponsesResult{Output: event.Response.Output, InputTokens: event.Response.Usage.InputTokens, CachedInputTokens: event.Response.Usage.InputTokenDetails.CachedTokens}
 		case "response.failed", "error":
 			message := event.Error.Message
 			if message == "" {
@@ -123,16 +130,16 @@ func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConf
 			if message == "" {
 				message = "Agent Responses stream failed"
 			}
-			return nil, errors.New(message)
+			return agentResponsesResult{}, errors.New(message)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read Agent Responses stream: %w", err)
+		return agentResponsesResult{}, fmt.Errorf("read Agent Responses stream: %w", err)
 	}
-	if len(output) == 0 {
-		return nil, errors.New("Agent Responses stream ended without a completed response")
+	if len(result.Output) == 0 {
+		return agentResponsesResult{}, errors.New("Agent Responses stream ended without a completed response")
 	}
-	return output, nil
+	return result, nil
 }
 
 func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta func(string)) (agentModelMessage, error) {
@@ -239,6 +246,18 @@ func (s *AIAgentService) streamChatCompletions(ctx context.Context, config AIAge
 	return message, nil
 }
 
+func agentResponsesPromptCacheKey(model string) string {
+	tools, _ := json.Marshal(responsesTools())
+	digest := sha256.Sum256([]byte(model + "\x00" + agentSystemPrompt + "\x00" + string(tools)))
+	return fmt.Sprintf("sub2api-agent-%x", digest[:12])
+}
+
+type agentResponsesResult struct {
+	Output            []json.RawMessage
+	InputTokens       int
+	CachedInputTokens int
+}
+
 func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentConfig, key string, history []agentModelMessage, onTextDelta func(string)) (agentModelMessage, error) {
 	payload := map[string]any{
 		"model":             config.Model,
@@ -248,12 +267,13 @@ func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentCo
 		"tool_choice":       "auto",
 		"max_output_tokens": 4096,
 		"stream":            onTextDelta != nil,
+		"prompt_cache_key":  agentResponsesPromptCacheKey(config.Model),
 	}
 	if config.ThinkingMode != "" {
 		payload["reasoning"] = map[string]any{"effort": config.ThinkingMode, "summary": "auto"}
 		payload["include"] = []string{"reasoning.encrypted_content"}
 	}
-	var output []json.RawMessage
+	var result agentResponsesResult
 	if onTextDelta == nil {
 		responseBody, err := s.sendModelRequest(ctx, config, key, "/v1/responses", payload)
 		if err != nil {
@@ -261,21 +281,27 @@ func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentCo
 		}
 		var response struct {
 			Output []json.RawMessage `json:"output"`
+			Usage  struct {
+				InputTokens       int `json:"input_tokens"`
+				InputTokenDetails struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"input_tokens_details"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Output) == 0 {
 			return agentModelMessage{}, errors.New("Agent Responses response is invalid")
 		}
-		output = response.Output
+		result = agentResponsesResult{Output: response.Output, InputTokens: response.Usage.InputTokens, CachedInputTokens: response.Usage.InputTokenDetails.CachedTokens}
 	} else {
-		streamOutput, err := s.streamResponses(ctx, config, key, payload, onTextDelta)
+		streamResult, err := s.streamResponses(ctx, config, key, payload, onTextDelta)
 		if err != nil {
 			return agentModelMessage{}, err
 		}
-		output = streamOutput
+		result = streamResult
 	}
-	message := agentModelMessage{Role: "assistant", ResponsesOutput: output}
+	message := agentModelMessage{Role: "assistant", ResponsesOutput: result.Output, InputTokens: result.InputTokens, CachedInputTokens: result.CachedInputTokens}
 	var textParts []string
-	for _, raw := range output {
+	for _, raw := range result.Output {
 		var item struct {
 			ID        string          `json:"id"`
 			Type      string          `json:"type"`

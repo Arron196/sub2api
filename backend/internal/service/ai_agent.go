@@ -106,6 +106,7 @@ type AIAgentConfig struct {
 	ContextWindow       string `json:"context_window"`
 	ContextWindowTokens int    `json:"context_window_tokens"`
 	Streaming           bool   `json:"streaming"`
+	ResponseCache       bool   `json:"response_cache"`
 }
 
 type UpdateAIAgentConfigInput struct {
@@ -401,6 +402,7 @@ func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 		ContextWindow:       contextWindow,
 		ContextWindowTokens: contextWindowTokens,
 		Streaming:           true,
+		ResponseCache:       protocol == agentProtocolResponses,
 	}, nil
 }
 
@@ -665,14 +667,16 @@ func readAgentResponse(response *http.Response, limit int64) ([]byte, error) {
 }
 
 type agentModelMessage struct {
-	Role             string            `json:"role"`
-	Content          any               `json:"content,omitempty"`
-	ToolCalls        []agentToolCall   `json:"tool_calls,omitempty"`
-	ToolCallID       string            `json:"tool_call_id,omitempty"`
-	Name             string            `json:"name,omitempty"`
-	ReasoningContent string            `json:"reasoning_content,omitempty"`
-	ResponsesOutput  []json.RawMessage `json:"-"`
-	AnthropicContent []json.RawMessage `json:"-"`
+	Role              string            `json:"role"`
+	Content           any               `json:"content,omitempty"`
+	ToolCalls         []agentToolCall   `json:"tool_calls,omitempty"`
+	ToolCallID        string            `json:"tool_call_id,omitempty"`
+	Name              string            `json:"name,omitempty"`
+	ReasoningContent  string            `json:"reasoning_content,omitempty"`
+	ResponsesOutput   []json.RawMessage `json:"-"`
+	AnthropicContent  []json.RawMessage `json:"-"`
+	InputTokens       int               `json:"-"`
+	CachedInputTokens int               `json:"-"`
 }
 
 type agentToolCall struct {
@@ -884,9 +888,16 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 		}
 		conversation.mu.Lock()
 		conversation.model = append(conversation.model, message)
-		appendAgentEvent(conversation, config.ProcessDisplay, "model_result", "", nil, map[string]any{
+		resultMetadata := map[string]any{
 			"round": round + 1, "duration_ms": time.Since(modelStarted).Milliseconds(), "tool_calls": len(message.ToolCalls),
-		})
+		}
+		if config.Protocol == agentProtocolResponses {
+			resultMetadata["cache_enabled"] = true
+			resultMetadata["input_units"] = message.InputTokens
+			resultMetadata["cached_units"] = message.CachedInputTokens
+			resultMetadata["cache_hit"] = message.CachedInputTokens > 0
+		}
+		appendAgentEvent(conversation, config.ProcessDisplay, "model_result", "", nil, resultMetadata)
 		if len(message.ToolCalls) == 0 {
 			content := strings.TrimSpace(modelMessageText(message.Content))
 			if content == "" {

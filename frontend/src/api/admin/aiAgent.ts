@@ -14,6 +14,7 @@ export interface AIAgentConfig {
   context_window: string
   context_window_tokens: number
   streaming: boolean
+  response_cache: boolean
 }
 
 export interface AIAgentMessage {
