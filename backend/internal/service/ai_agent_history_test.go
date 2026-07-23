@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -478,6 +479,7 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 	var mu sync.Mutex
 	modelCalls := 0
 	writes := 0
+	trustedManifest := false
 	concurrency := float64(10)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -497,9 +499,14 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 			mu.Unlock()
 			_ = json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": map[string]any{"id": 3, "name": "Account", "concurrency": current}})
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/chat/completions":
+			requestBody, _ := io.ReadAll(request.Body)
 			mu.Lock()
 			modelCalls++
 			call := modelCalls
+			if call == 1 {
+				text := string(requestBody)
+				trustedManifest = strings.Contains(text, "compensation_manifest") && strings.Contains(text, "PUT:/admin/accounts/:id") && strings.Contains(text, `\"id\":3`)
+			}
 			mu.Unlock()
 			if call == 1 {
 				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-read","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"GET:/admin/accounts/:id\",\"path_params\":{\"id\":3}}"}}]}}]}`)
@@ -549,9 +556,13 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 	mu.Lock()
 	writeCount := writes
 	callCount := modelCalls
+	manifestIncluded := trustedManifest
 	mu.Unlock()
 	if writeCount != 0 || callCount != 3 {
 		t.Fatalf("assisted rollback writes=%d model_calls=%d", writeCount, callCount)
+	}
+	if !manifestIncluded {
+		t.Fatal("assisted rollback model context omitted the exact audited compensation manifest")
 	}
 	if completed.Pending == nil || completed.Pending.Path != "/admin/accounts/3" || completed.Pending.RecoveryRollbackID != "" {
 		t.Fatalf("assisted rollback did not stage a pending recovery: pending=%#v messages=%#v events=%#v", completed.Pending, completed.Messages, completed.Events)

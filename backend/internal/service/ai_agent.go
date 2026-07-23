@@ -1940,15 +1940,32 @@ func agentPrimaryAction(query string) string {
 }
 
 func agentPrimaryResourceLabel(query string) string {
+	query = strings.ToLower(query)
 	primary := ""
 	lastIndex := -1
-	for _, label := range agentResourceContextLabels {
-		if index := strings.LastIndex(strings.ToLower(query), label); index > lastIndex {
-			lastIndex = index
-			primary = label
+	for module, display := range agentModuleDisplayNames {
+		candidates := append([]string{display, module}, agentOperationAliases[display]...)
+		for _, candidate := range candidates {
+			if index := strings.LastIndex(query, strings.ToLower(candidate)); index > lastIndex {
+				lastIndex = index
+				primary = display
+			}
 		}
 	}
 	return primary
+}
+
+func agentQueryMentionsAlias(query, source string) bool {
+	query = strings.ToLower(query)
+	if strings.Contains(query, strings.ToLower(source)) {
+		return true
+	}
+	for _, alias := range agentOperationAliases[source] {
+		if strings.Contains(query, strings.ToLower(alias)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AIAgentService) suggestOperations(query string, limit int) []agentSuggestedOperation {
@@ -1958,8 +1975,8 @@ func (s *AIAgentService) suggestOperations(query string, limit int) []agentSugge
 	}
 	expanded := normalized
 	for _, source := range agentOperationAliasSources {
-		if strings.Contains(normalized, source) {
-			expanded += " " + strings.Join(agentOperationAliases[source], " ")
+		if agentQueryMentionsAlias(normalized, source) {
+			expanded += " " + source + " " + strings.Join(agentOperationAliases[source], " ")
 		}
 	}
 	for _, label := range agentAmbiguousFieldAliasLabels {
@@ -1973,7 +1990,7 @@ func (s *AIAgentService) suggestOperations(query string, limit int) []agentSugge
 	primaryResource := agentPrimaryResourceLabel(normalized)
 	recognizedIntent := expectedMethod != ""
 	for _, source := range agentOperationAliasSources {
-		if strings.Contains(normalized, source) {
+		if agentQueryMentionsAlias(normalized, source) {
 			recognizedIntent = true
 			break
 		}
@@ -2016,7 +2033,7 @@ func (s *AIAgentService) suggestOperations(query string, limit int) []agentSugge
 			}
 		}
 		for _, source := range agentOperationAliasSources {
-			if !strings.Contains(normalized, source) {
+			if !agentQueryMentionsAlias(normalized, source) {
 				continue
 			}
 			if agentOperationMatchesAlias(entry.operation, agentOperationAliases[source]) {

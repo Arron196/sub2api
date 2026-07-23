@@ -310,6 +310,28 @@ func TestAIAgentCompoundGroupRedeemIntentUsesGenerateCapability(t *testing.T) {
 	}
 }
 
+func TestAIAgentEnglishResourceAliasesRankMatchingSkill(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	tests := []struct {
+		query string
+		key   string
+	}{
+		{query: "update user allowed_groups assign group to user", key: "PUT:/admin/users/:id"},
+		{query: "delete user by user id", key: "DELETE:/admin/users/:id"},
+	}
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			candidates := service.suggestOperations(test.query, 6)
+			if len(candidates) == 0 || candidates[0].Operation.Key != test.key {
+				t.Fatalf("suggestOperations(%q) = %#v, want first %s", test.query, candidates, test.key)
+			}
+		})
+	}
+}
+
 func TestAIAgentLargeContractsPrioritizeFieldsAndRequireExactInspection(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
@@ -406,6 +428,51 @@ func TestAIAgentPlanAllowsCreatedGroupReferenceInUserAllowedGroups(t *testing.T)
 	groups, _ := userBody["allowed_groups"].([]any)
 	if len(groups) != 1 || !containsAgentPlanReference(groups[0]) {
 		t.Fatalf("stored user group reference = %#v", userBody)
+	}
+}
+
+func TestAIAgentRollbackManifestPreservesReverseCompensationOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/admin/users/3":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":3,"username":"new-user","email":"new-user@example.com","allowed_groups":[5]}}`))
+		case "/api/v1/admin/groups/5":
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":5,"name":"exclusive group","platform":"openai"}}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	_, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	internalAuth, _ := NewAgentInternalAuth()
+	service, err := NewAIAgentService(nil, nil, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	service.client = server.Client()
+	now := time.Now()
+	rollback := AIAgentRollback{
+		ID: "plan-rollback", PlanID: "plan-1", Operation: "Create user and group", Strategy: agentRollbackStrategyPlan, Status: "available",
+		Children: []AIAgentRollback{
+			{ID: "group", Operation: "Create group", Strategy: agentRollbackStrategyDelete, Status: "available", Method: http.MethodDelete, Path: "/admin/groups/5", Resource: "groups", TargetID: "5", ForwardBody: map[string]any{"name": "exclusive group", "platform": "openai"}, CreatedAt: now, UpdatedAt: now},
+			{ID: "user", Operation: "Create user", Strategy: agentRollbackStrategyDelete, Status: "available", Method: http.MethodDelete, Path: "/admin/users/3", Resource: "users", TargetID: "3", ForwardBody: map[string]any{"username": "new-user", "email": "new-user@example.com", "allowed_groups": []any{float64(5)}}, CreatedAt: now, UpdatedAt: now},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	}
+	preview := service.rollbackPreviewForRecord(context.Background(), AIAgentActor{UserID: 1}, rollback)
+	manifest := service.agentRollbackCompensationManifest(context.Background(), AIAgentActor{UserID: 1}, rollback, preview)
+	operations, _ := manifest["operations"].([]map[string]any)
+	if manifest["deterministic_can_execute"] != true || len(operations) != 2 {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	if operations[0]["endpoint_key"] != "DELETE:/admin/users/:id" || fmt.Sprint(operations[0]["target_id"]) != "3" {
+		t.Fatalf("first compensation = %#v", operations[0])
+	}
+	if operations[1]["endpoint_key"] != "DELETE:/admin/groups/:id" || fmt.Sprint(operations[1]["target_id"]) != "5" || fmt.Sprint(operations[1]["depends_on"]) != "[compensation_1]" {
+		t.Fatalf("second compensation = %#v", operations[1])
 	}
 }
 
