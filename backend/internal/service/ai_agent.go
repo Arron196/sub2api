@@ -43,7 +43,7 @@ const (
 //go:embed ai_agent_catalog.json
 var agentCatalogJSON []byte
 
-// Generated from the audited admin handlers' JSON request structs.
+// Generated and audited from admin route path, query, and JSON body contracts.
 //
 //go:embed ai_agent_contracts.json
 var agentContractsJSON []byte
@@ -76,10 +76,14 @@ type AgentCatalogOperation struct {
 	BodyExample     map[string]any `json:"body_example,omitempty"`
 	BodySchema      map[string]any `json:"body_schema,omitempty"`
 	QueryExample    map[string]any `json:"query_example,omitempty"`
+	QuerySchema     map[string]any `json:"query_schema,omitempty"`
+	PathSchema      map[string]any `json:"path_schema,omitempty"`
 }
 
 type agentOperationContract struct {
-	BodySchema map[string]any `json:"body_schema"`
+	BodySchema  map[string]any `json:"body_schema"`
+	QuerySchema map[string]any `json:"query_schema"`
+	PathSchema  map[string]any `json:"path_schema"`
 }
 
 type agentSearchEntry struct {
@@ -343,6 +347,8 @@ func NewAIAgentService(settings SettingRepository, encryptor SecretEncryptor, cf
 	for index := range catalog {
 		if contract, exists := contracts[catalog[index].Key]; exists {
 			catalog[index].BodySchema = contract.BodySchema
+			catalog[index].QuerySchema = contract.QuerySchema
+			catalog[index].PathSchema = contract.PathSchema
 		}
 		byKey[catalog[index].Key] = catalog[index]
 	}
@@ -1129,7 +1135,7 @@ func (s *AIAgentService) complete(ctx context.Context, config AIAgentConfig, key
 const agentSystemPrompt = `You are the built-in Sub2API administration Agent. Answer in the administrator's language.
 You may only use operations supplied in the local audited candidates or returned by search_admin_operations. Never invent an endpoint key or arbitrary URL. Never claim that an administrative capability or standalone operation is unavailable until you have checked the supplied candidates and, when necessary, searched the audited catalog for that exact capability.
 For independent batch writes or writes where a later operation consumes an ID created by an earlier operation, use plan_admin_operations once instead of issuing unrelated execute calls. Prefer one audited native batch operation when the catalog supplies an exact semantic match. Give every plan node a short unique id, declare dependencies, and reference only allow-listed outputs with {"$ref":"node_id.resource_id"} or {"$ref":"node_id.resource_name"}. Use continue_independent for independent batch work, stop_on_failure for dependent work, or rollback_on_failure when completed reversible nodes should be compensated. Do not use a plan for one ordinary operation or for unrelated commands that share no batch intent. If a submitted plan is invalid, repair and resubmit the whole plan; never fall back to executing its write nodes separately because the runtime blocks that unsafe downgrade.
-Each user message may contain locally ranked audited plans. When an intent's first candidate has high confidence and uniquely matches it, execute that candidate directly without another catalog search. When candidates are absent, ambiguous, or semantically different, you must call search_admin_operations with the exact unresolved business capability before claiming it is unsupported. Search results are nested by resource Skill and include request-contract projections plus a compact operation_manifest for the primary Skill. A candidate with body_fields_truncated=true is not a complete contract. Before claiming that a field is unavailable, call search_admin_operations with endpoint_key to inspect that operation's complete body_field_contracts; if the contract is too large or nested, call it again with the exact field path. Expand a Skill once and inspect its manifest before searching again; reuse cached candidate details for equivalent queries. Search again only for a materially different capability that is not represented in the expanded manifest. Never repeat or paraphrase an equivalent search in one run.
+Each user message may contain locally ranked audited plans. When an intent's first candidate has high confidence and uniquely matches it, execute that candidate directly without another catalog search. When candidates are absent, ambiguous, or semantically different, you must call search_admin_operations with the exact unresolved business capability before claiming it is unsupported. Search results are nested by resource Skill and include request-contract projections plus a compact operation_manifest for the primary Skill. A candidate with body_fields_truncated=true is not a complete contract. Before claiming that a field is unavailable, call search_admin_operations with endpoint_key to inspect that operation's complete body_field_contracts, query_field_contracts, and path_contract; if the body contract is too large or nested, call it again with the exact body field path. Expand a Skill once and inspect its manifest before searching again; reuse cached candidate details for equivalent queries. Search again only for a materially different capability that is not represented in the expanded manifest. Never repeat or paraphrase an equivalent search in one run.
 Resolve uncertainty autonomously from the conversation, local candidates, and exact target lookups whenever possible. Ask the administrator only when resource type remains ambiguous, a name has zero or multiple exact matches, or materially different writes are still possible. If the planning context says resource clarification is required, do not call any tool; ask one concise resource question. For multiple intents, complete them in order. You may issue multiple independent tool calls in one response. In supervised mode, multiple writes are queued and confirmed one at a time.
 Follow body_example and the concise body field contract exactly. Put path parameters in path_params, query string values in query, and JSON payload in body. Treat required_fields as authoritative: do not ask for optional fields unless omitting them materially changes the requested outcome. Infer explicitly stated names and values from ordinary phrases such as “OpenAI group”, and map an unambiguous requested resource relationship to the matching enum and foreign-key field. If a required value has a documented backend default and the administrator did not override it, use that default and report it instead of asking mechanically. For account creation, preserve an explicitly supplied concurrency and priority; when omitted, set concurrency=10 and priority=1. These defaults are enforced by the runtime before confirmation, so do not ask a redundant clarification when they are absent.
 Read operations execute immediately. Writes are supervised by default and become pending actions that the administrator must confirm in the UI.
@@ -1281,6 +1287,9 @@ func (s *AIAgentService) executeTool(ctx context.Context, actor AIAgentActor, se
 				"message": "A multi-operation plan was already declared for this run. Repair and resubmit the complete plan; executing its write nodes separately is blocked to prevent partial completion.",
 			})
 		}
+		if err := validateAgentOperationParameters(operation, arguments.PathParams, arguments.URLQuery); err != nil {
+			return marshalAgentToolResult(map[string]any{"status": "invalid_parameters", "message": err.Error()})
+		}
 		path, err := renderAgentOperationPath(operation, arguments.PathParams)
 		if err != nil {
 			return marshalAgentToolResult(map[string]any{"status": "invalid_path", "message": err.Error()})
@@ -1290,7 +1299,7 @@ func (s *AIAgentService) executeTool(ctx context.Context, actor AIAgentActor, se
 			arguments.Body, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, arguments.Body)
 		}
 		if err == nil {
-			err = validateAgentBodyContract(operation.BodySchema, arguments.Body, "body")
+			err = validateAgentOperationBodyContract(operation, arguments.Body)
 		}
 		if err == nil {
 			err = validateAgentOperationSemantics(operation.Method, path, arguments.Body)
@@ -1680,6 +1689,14 @@ func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, 
 	}
 	if len(operation.PathParams) > 0 {
 		result["path_params"] = operation.PathParams
+		result["path_contract"] = compactAgentSchemaField(operation.PathSchema)
+	}
+	if queryProperties, ok := operation.QuerySchema["properties"].(map[string]any); ok && len(queryProperties) > 0 {
+		queryContracts := make(map[string]any, len(queryProperties))
+		for name, schema := range queryProperties {
+			queryContracts[name] = compactAgentSchemaField(schema)
+		}
+		result["query_field_contracts"] = queryContracts
 	}
 	encoded, _ := json.Marshal(result)
 	if len(encoded) > agentMaxToolOutput {
@@ -1868,10 +1885,10 @@ func agentCapabilityClaimCorrection(response string, searchCount, contractCount,
 	if agentClaimsMissingField(response) {
 		if contractCount == 0 {
 			return `[Runtime operation-contract verification required]
-You are about to claim that an audited operation does not expose a request field, but no complete operation contract has been inspected in this run. Candidate body_fields may be a truncated projection. Call search_admin_operations with endpoint_key set to the exact candidate operation, inspect body_field_contracts, and then continue. Do not repeat the field-availability claim before this check.`
+You are about to claim that an audited operation does not expose a request field, but no complete operation contract has been inspected in this run. Candidate fields may be a truncated projection. Call search_admin_operations with endpoint_key set to the exact candidate operation, inspect body_field_contracts, query_field_contracts, and path_contract, and then continue. Do not repeat the field-availability claim before this check.`
 		}
 		return `[Runtime operation-contract verification required]
-A complete audited operation contract was already returned in this run. Recheck body_field_contracts and use any matching field shown there. If the field is genuinely absent, cite the inspected endpoint_key and the complete contract rather than relying on a candidate projection.`
+A complete audited operation contract was already returned in this run. Recheck body_field_contracts, query_field_contracts, and path_contract and use any matching field shown there. If the field is genuinely absent, cite the inspected endpoint_key and the complete contract rather than relying on a candidate projection.`
 	}
 	if !agentClaimsMissingCapability(response) {
 		return ""
@@ -2096,6 +2113,15 @@ func agentOperationSummary(candidate agentSuggestedOperation) map[string]any {
 	}
 	if len(operation.PathParams) > 0 {
 		summary["path_params"] = operation.PathParams
+		summary["path_contract"] = compactAgentSchemaField(operation.PathSchema)
+	}
+	if queryProperties, ok := operation.QuerySchema["properties"].(map[string]any); ok && len(queryProperties) > 0 {
+		queryFields := make([]string, 0, len(queryProperties))
+		for name := range queryProperties {
+			queryFields = append(queryFields, name)
+		}
+		sort.Strings(queryFields)
+		summary["query_fields"] = queryFields
 	}
 	if len(candidate.BodyFields) > 0 {
 		summary["body_fields"] = candidate.BodyFields
@@ -2233,13 +2259,15 @@ func agentSchemaStringList(value any) []string {
 
 func agentOperationSearchDocument(operation AgentCatalogOperation) string {
 	parts := []string{operation.Key, operation.Module, operation.Title, operation.Path}
-	if properties, ok := operation.BodySchema["properties"].(map[string]any); ok {
-		fields := make([]string, 0, len(properties))
-		for field := range properties {
-			fields = append(fields, field)
+	for _, schema := range []map[string]any{operation.BodySchema, operation.QuerySchema} {
+		if properties, ok := schema["properties"].(map[string]any); ok {
+			fields := make([]string, 0, len(properties))
+			for field := range properties {
+				fields = append(fields, field)
+			}
+			sort.Strings(fields)
+			parts = append(parts, fields...)
 		}
-		sort.Strings(fields)
-		parts = append(parts, fields...)
 	}
 	for _, source := range agentOperationAliasSources {
 		if agentOperationMatchesAlias(operation, agentOperationAliases[source]) {
@@ -2529,6 +2557,77 @@ func agentOperationPathMatches(template, actual string) bool {
 		}
 	}
 	return true
+}
+
+func validateAgentOperationParameters(operation AgentCatalogOperation, pathParams, query map[string]any) error {
+	if len(operation.PathSchema) == 0 {
+		if len(pathParams) > 0 {
+			return errors.New("path_params are not accepted by this operation")
+		}
+	} else if err := validateAgentBodyContract(operation.PathSchema, pathParams, "path_params"); err != nil {
+		return err
+	}
+	return validateAgentOperationQuery(operation, query)
+}
+
+func validateAgentOperationQuery(operation AgentCatalogOperation, query map[string]any) error {
+	if len(operation.QuerySchema) == 0 {
+		if len(query) > 0 {
+			return errors.New("query parameters are not accepted by this operation")
+		}
+	} else if err := validateAgentBodyContract(operation.QuerySchema, query, "query"); err != nil {
+		return err
+	}
+	return validateAgentOperationQuerySemantics(operation.Path, query)
+}
+
+func validateAgentOperationQuerySemantics(path string, query map[string]any) error {
+	for _, pair := range [][2]string{{"start_date", "end_date"}, {"start_time", "end_time"}, {"start_at", "end_at"}, {"from", "to"}} {
+		startText := strings.TrimSpace(agentInputString(query[pair[0]]))
+		endText := strings.TrimSpace(agentInputString(query[pair[1]]))
+		if startText == "" || endText == "" {
+			continue
+		}
+		start, startOK := parseAgentQueryTime(startText)
+		end, endOK := parseAgentQueryTime(endText)
+		if !startOK || !endOK {
+			return fmt.Errorf("query.%s and query.%s must use RFC3339 or YYYY-MM-DD timestamps", pair[0], pair[1])
+		}
+		if start.After(end) {
+			return fmt.Errorf("query.%s must not be after query.%s", pair[0], pair[1])
+		}
+	}
+	minimumDuration, hasMinimum := agentOptionalNumericValue(query["min_duration_ms"])
+	maximumDuration, hasMaximum := agentOptionalNumericValue(query["max_duration_ms"])
+	if hasMinimum && hasMaximum && minimumDuration > maximumDuration {
+		return errors.New("query.min_duration_ms must not exceed query.max_duration_ms")
+	}
+	if path == "/admin/ops/dashboard/openai-token-stats" && query["top_n"] != nil && (query["page"] != nil || query["page_size"] != nil) {
+		return errors.New("query.top_n cannot be combined with query.page or query.page_size")
+	}
+	return nil
+}
+
+func parseAgentQueryTime(value string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func validateAgentOperationBodyContract(operation AgentCatalogOperation, body any) error {
+	if len(operation.BodySchema) == 0 {
+		if body != nil {
+			return errors.New("body is not accepted by this operation")
+		}
+		return nil
+	}
+	if body == nil {
+		return errors.New("body is required by this operation")
+	}
+	return validateAgentBodyContract(operation.BodySchema, body, "body")
 }
 
 func validateAgentBodyContract(schema map[string]any, value any, path string) error {
@@ -3720,7 +3819,10 @@ func (s *AIAgentService) Confirm(ctx context.Context, actor AIAgentActor, conver
 	pending.Body, err = normalizeAgentOperationBody(pending.Method, pending.Path, pending.Body)
 	if err == nil {
 		if operation, exists := s.operationForPending(pending); exists {
-			err = validateAgentBodyContract(operation.BodySchema, pending.Body, "body")
+			err = validateAgentOperationQuery(operation, pending.Query)
+			if err == nil {
+				err = validateAgentOperationBodyContract(operation, pending.Body)
+			}
 		}
 	}
 	if err == nil {
@@ -3791,7 +3893,10 @@ func (s *AIAgentService) Cancel(ctx context.Context, actorUserID int64, conversa
 
 func (s *AIAgentService) executePending(ctx context.Context, actor AIAgentActor, pending *AIAgentPendingAction) (any, *AIAgentRollback, error) {
 	if operation, exists := s.catalogByKey[pending.EndpointKey]; exists {
-		if err := validateAgentBodyContract(operation.BodySchema, pending.Body, "body"); err != nil {
+		if err := validateAgentOperationQuery(operation, pending.Query); err != nil {
+			return nil, nil, err
+		}
+		if err := validateAgentOperationBodyContract(operation, pending.Body); err != nil {
 			return nil, nil, err
 		}
 		if err := validateAgentOperationSemantics(operation.Method, pending.Path, pending.Body); err != nil {

@@ -19,6 +19,10 @@ import (
 	"github.com/google/uuid"
 )
 
+func agentTestOpenBodySchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": map[string]any{}}
+}
+
 func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
@@ -337,6 +341,10 @@ func TestAIAgentLargeContractsPrioritizeFieldsAndRequireExactInspection(t *testi
 	if !strings.Contains(nested, `"status":"field_contract_resolved"`) || !strings.Contains(nested, `"enum":["minimal","low","medium","high","xhigh","max"]`) {
 		t.Fatalf("nested field contract lookup = %s", nested)
 	}
+	queryContract := service.inspectAgentOperationContract(session, "GET:/admin/users", "")
+	if !strings.Contains(queryContract, `"query_field_contracts"`) || !strings.Contains(queryContract, `"search":{"maximum":2048,"type":"string"}`) || strings.Contains(queryContract, `"keyword"`) {
+		t.Fatalf("query contract lookup = %s", queryContract)
+	}
 	correction := agentCapabilityClaimCorrection("更新接口未开放 subscription_type 字段，因此无法修改", 1, 0, 0)
 	if !strings.Contains(correction, "endpoint_key") || !strings.Contains(correction, "body_field_contracts") {
 		t.Fatalf("missing-field claim was not forced through exact contract inspection: %s", correction)
@@ -348,7 +356,7 @@ func TestAIAgentAccountDefaultsPersistInExecutionPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
-	marker := AgentCatalogOperation{Key: "POST:/admin/test/marker", Method: http.MethodPost, Path: "/admin/test/marker", Title: "Marker"}
+	marker := AgentCatalogOperation{Key: "POST:/admin/test/marker", Method: http.MethodPost, Path: "/admin/test/marker", Title: "Marker", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[marker.Key] = marker
 	plan, _, err := service.prepareAgentExecutionPlan(context.Background(), AIAgentActor{}, "create account and marker", map[string]bool{}, agentPlanArguments{
 		Title: "account defaults", FailurePolicy: "stop_on_failure", Nodes: []agentPlanNodeArgument{
@@ -376,7 +384,7 @@ func TestAIAgentInvalidPlanCannotDowngradeToSeparateWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
-	operation := AgentCatalogOperation{Key: "POST:/admin/test/plan-guard", Method: http.MethodPost, Path: "/admin/test/plan-guard", Title: "Guarded write"}
+	operation := AgentCatalogOperation{Key: "POST:/admin/test/plan-guard", Method: http.MethodPost, Path: "/admin/test/plan-guard", Title: "Guarded write", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[operation.Key] = operation
 	session := newAIAgentSession("plan-guard")
 	invalidPlan := agentToolCall{Function: agentToolFunction{Name: "plan_admin_operations", Arguments: `{
@@ -416,8 +424,8 @@ func TestAIAgentSupervisedWritesQueueAndPromote(t *testing.T) {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
 	service.client = server.Client()
-	firstOperation := AgentCatalogOperation{Key: "POST:/admin/test/first", Method: http.MethodPost, Path: "/admin/test/first", Title: "First"}
-	secondOperation := AgentCatalogOperation{Key: "POST:/admin/test/second", Method: http.MethodPost, Path: "/admin/test/second", Title: "Second"}
+	firstOperation := AgentCatalogOperation{Key: "POST:/admin/test/first", Method: http.MethodPost, Path: "/admin/test/first", Title: "First", BodySchema: agentTestOpenBodySchema()}
+	secondOperation := AgentCatalogOperation{Key: "POST:/admin/test/second", Method: http.MethodPost, Path: "/admin/test/second", Title: "Second", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[firstOperation.Key] = firstOperation
 	service.catalogByKey[secondOperation.Key] = secondOperation
 	session := newAIAgentSession("multi")
@@ -497,8 +505,8 @@ func TestAIAgentExecutionPlanBindsDependenciesAndPersists(t *testing.T) {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
 	service.client = server.Client()
-	parentOperation := AgentCatalogOperation{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent", Module: "test"}
-	childOperation := AgentCatalogOperation{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child", Module: "test"}
+	parentOperation := AgentCatalogOperation{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent", Module: "test", BodySchema: agentTestOpenBodySchema()}
+	childOperation := AgentCatalogOperation{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child", Module: "test", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[parentOperation.Key] = parentOperation
 	service.catalogByKey[childOperation.Key] = childOperation
 	service.catalog = append(service.catalog, parentOperation, childOperation)
@@ -569,11 +577,11 @@ func TestAIAgentExecutionPlanRejectsUnsafeReferencesAndCycles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
-	operation := AgentCatalogOperation{Key: "POST:/admin/test/nodes", Method: http.MethodPost, Path: "/admin/test/nodes", Title: "Create node"}
+	operation := AgentCatalogOperation{Key: "POST:/admin/test/nodes", Method: http.MethodPost, Path: "/admin/test/nodes", Title: "Create node", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[operation.Key] = operation
 	actor := AIAgentActor{UserID: 23}
 	unsafe := agentPlanArguments{Title: "unsafe", FailurePolicy: "stop_on_failure", Nodes: []agentPlanNodeArgument{
-		{ID: "one", EndpointKey: operation.Key},
+		{ID: "one", EndpointKey: operation.Key, Body: map[string]any{}},
 		{ID: "two", EndpointKey: operation.Key, DependsOn: []string{"one"}, Body: map[string]any{"token": map[string]any{"$ref": "one.credentials"}}},
 	}}
 	if _, _, err := service.prepareAgentExecutionPlan(context.Background(), actor, "test", nil, unsafe); err == nil || !strings.Contains(err.Error(), "allow-listed") {
@@ -664,10 +672,10 @@ func TestAIAgentExecutionPlanStopsDependentsAndCompensates(t *testing.T) {
 	}
 	service.client = server.Client()
 	operations := []AgentCatalogOperation{
-		{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent"},
+		{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent", BodySchema: agentTestOpenBodySchema()},
 		{Key: "DELETE:/admin/test/parents/:id", Method: http.MethodDelete, Path: "/admin/test/parents/:id", PathParams: []string{"id"}, Title: "Delete parent"},
-		{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child"},
-		{Key: "POST:/admin/test/grants", Method: http.MethodPost, Path: "/admin/test/grants", Title: "Create grant"},
+		{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child", BodySchema: agentTestOpenBodySchema()},
+		{Key: "POST:/admin/test/grants", Method: http.MethodPost, Path: "/admin/test/grants", Title: "Create grant", BodySchema: agentTestOpenBodySchema()},
 	}
 	for _, operation := range operations {
 		service.catalogByKey[operation.Key] = operation
@@ -732,9 +740,9 @@ func TestAIAgentFailedAutoPlanPersistsCompletedNodeRollbacks(t *testing.T) {
 	}
 	service.client = server.Client()
 	for _, operation := range []AgentCatalogOperation{
-		{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent"},
+		{Key: "POST:/admin/test/parents", Method: http.MethodPost, Path: "/admin/test/parents", Title: "Create parent", BodySchema: agentTestOpenBodySchema()},
 		{Key: "DELETE:/admin/test/parents/:id", Method: http.MethodDelete, Path: "/admin/test/parents/:id", PathParams: []string{"id"}, Title: "Delete parent"},
-		{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child"},
+		{Key: "POST:/admin/test/children", Method: http.MethodPost, Path: "/admin/test/children", Title: "Create child", BodySchema: agentTestOpenBodySchema()},
 	} {
 		service.catalogByKey[operation.Key] = operation
 		service.catalog = append(service.catalog, operation)
@@ -1321,7 +1329,7 @@ func TestRenderAgentOperationPathEscapesParameters(t *testing.T) {
 
 func TestAIAgentSensitiveWriteRequiresConfirmationInsteadOfBlocking(t *testing.T) {
 	service := &AIAgentService{catalogByKey: map[string]AgentCatalogOperation{
-		"POST:/admin/accounts": {Key: "POST:/admin/accounts", Module: "accounts", Method: http.MethodPost, Path: "/admin/accounts", Title: "创建"},
+		"POST:/admin/accounts": {Key: "POST:/admin/accounts", Module: "accounts", Method: http.MethodPost, Path: "/admin/accounts", Title: "创建", BodySchema: agentTestOpenBodySchema()},
 	}}
 	session := &aiAgentSession{observed: make(map[string]bool)}
 	call := agentToolCall{Function: agentToolFunction{Name: "execute_admin_operation", Arguments: `{"endpoint_key":"POST:/admin/accounts","body":{"name":"OpenAI account","platform":"openai","api_key":"sk-sensitive","base_url":"https://api.example.com"}}`}}
@@ -1392,7 +1400,7 @@ func TestAIAgentAutoApproveExecutesSensitiveWriteWithoutPendingConfirmation(t *t
 	service := &AIAgentService{
 		cfg: &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth: internalAuth, client: server.Client(),
 		catalogByKey: map[string]AgentCatalogOperation{
-			"POST:/admin/accounts": {Key: "POST:/admin/accounts", Method: http.MethodPost, Path: "/admin/accounts", Title: "Create account"},
+			"POST:/admin/accounts": {Key: "POST:/admin/accounts", Method: http.MethodPost, Path: "/admin/accounts", Title: "Create account", BodySchema: agentTestOpenBodySchema()},
 		},
 	}
 	session := &aiAgentSession{observed: make(map[string]bool)}

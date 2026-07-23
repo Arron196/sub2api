@@ -138,6 +138,14 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			return nil, nil, fmt.Errorf("node %s path parameters: %w", inputNode.ID, err)
 		}
 		pathParams, _ := previewPathParams.(map[string]any)
+		previewQuery, err := resolveAgentPlanValue(inputNode.Query, nil, true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("node %s query: %w", inputNode.ID, err)
+		}
+		query, _ := previewQuery.(map[string]any)
+		if err := validateAgentOperationParameters(operation, pathParams, query); err != nil {
+			return nil, nil, fmt.Errorf("node %s parameters are invalid: %w", inputNode.ID, err)
+		}
 		path, err := renderAgentOperationPath(operation, pathParams)
 		if err != nil {
 			return nil, nil, fmt.Errorf("node %s: %w", inputNode.ID, err)
@@ -152,7 +160,7 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			previewBody, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, previewBody)
 		}
 		if err == nil {
-			err = validateAgentBodyContract(operation.BodySchema, previewBody, "body")
+			err = validateAgentOperationBodyContract(operation, previewBody)
 		}
 		if err == nil {
 			err = validateAgentOperationSemantics(operation.Method, path, previewBody)
@@ -165,7 +173,7 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			normalizedNodeBody, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, normalizedNodeBody)
 		}
 		if err == nil {
-			err = validateAgentBodyContract(operation.BodySchema, normalizedNodeBody, "body")
+			err = validateAgentOperationBodyContract(operation, normalizedNodeBody)
 		}
 		if err == nil {
 			err = validateAgentOperationSemantics(operation.Method, path, normalizedNodeBody)
@@ -676,13 +684,16 @@ func (s *AIAgentService) resolveAgentPlanNode(ctx context.Context, actor AIAgent
 		return nil, err
 	}
 	query, _ := resolvedQuery.(map[string]any)
+	if err := validateAgentOperationParameters(operation, pathParams, query); err != nil {
+		return nil, err
+	}
 	body, err := resolveAgentPlanValue(node.Body, outputs, false)
 	if err != nil {
 		return nil, err
 	}
 	body, err = normalizeAgentOperationBody(operation.Method, path, body)
 	if err == nil {
-		err = validateAgentBodyContract(operation.BodySchema, body, "body")
+		err = validateAgentOperationBodyContract(operation, body)
 	}
 	if err == nil {
 		err = validateAgentOperationSemantics(operation.Method, path, body)

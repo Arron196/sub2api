@@ -322,7 +322,7 @@ func TestAIAgentProviderContextErrorCompressesAndRetries(t *testing.T) {
 	service.cfg = &config.Config{Server: config.ServerConfig{Port: port}}
 	service.client = server.Client()
 	service.internalAuth, _ = NewAgentInternalAuth()
-	operation := AgentCatalogOperation{Key: "POST:/admin/test/context-checkpoint", Method: http.MethodPost, Path: "/admin/test/context-checkpoint", Title: "Context checkpoint"}
+	operation := AgentCatalogOperation{Key: "POST:/admin/test/context-checkpoint", Method: http.MethodPost, Path: "/admin/test/context-checkpoint", Title: "Context checkpoint", BodySchema: agentTestOpenBodySchema()}
 	service.catalogByKey[operation.Key] = operation
 	settings.mu.Lock()
 	settings.values[agentSettingContextWindow] = "1m"

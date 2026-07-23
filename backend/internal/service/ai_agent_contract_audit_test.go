@@ -70,6 +70,26 @@ func TestValidateAgentOperationSemanticsCoversAuditedConditionalRules(t *testing
 	}
 }
 
+func TestValidateAgentOperationQuerySemanticsRejectsInvalidRanges(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		query map[string]any
+	}{
+		{name: "reversed dates", query: map[string]any{"start_date": "2030-01-03", "end_date": "2030-01-02"}},
+		{name: "invalid timestamps", query: map[string]any{"start_at": "not-a-date", "end_at": "2030-01-02"}},
+		{name: "reversed duration", query: map[string]any{"min_duration_ms": float64(200), "max_duration_ms": float64(100)}},
+		{name: "conflicting token pagination", path: "/admin/ops/dashboard/openai-token-stats", query: map[string]any{"top_n": float64(10), "page": float64(1)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateAgentOperationQuerySemantics(test.path, test.query); err == nil {
+				t.Fatal("validateAgentOperationQuerySemantics() unexpectedly accepted invalid query")
+			}
+		})
+	}
+}
+
 func TestMergeAgentSingletonPutBodyPreservesCurrentNonSensitiveFields(t *testing.T) {
 	schema := map[string]any{"type": "object", "properties": map[string]any{
 		"level":   map[string]any{"type": "string"},
@@ -118,6 +138,214 @@ func TestAIAgentWriteCatalogHasCompleteBodyClassification(t *testing.T) {
 	}
 }
 
+func TestAIAgentRequestContractsCoverEveryCatalogOperation(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	var stored map[string]agentOperationContract
+	if err := json.Unmarshal(agentContractsJSON, &stored); err != nil {
+		t.Fatalf("decode Agent contracts: %v", err)
+	}
+	bodies, queries, paths := 0, 0, 0
+	var violations []string
+	for _, operation := range service.catalog {
+		contract, exists := stored[operation.Key]
+		if !exists {
+			violations = append(violations, operation.Key+": missing request contract entry")
+			continue
+		}
+		if len(contract.BodySchema) > 0 {
+			bodies++
+		}
+		if len(contract.QuerySchema) > 0 {
+			queries++
+		}
+		if len(contract.PathSchema) > 0 {
+			paths++
+		}
+		pathProperties, _ := contract.PathSchema["properties"].(map[string]any)
+		if len(pathProperties) != len(operation.PathParams) {
+			violations = append(violations, fmt.Sprintf("%s: path schema has %d fields, catalog has %d", operation.Key, len(pathProperties), len(operation.PathParams)))
+		}
+		for _, name := range operation.PathParams {
+			if _, exists := pathProperties[name]; !exists {
+				violations = append(violations, operation.Key+": missing path parameter "+name)
+			}
+		}
+	}
+	if len(stored) != 384 || bodies != 157 || queries != 76 || paths != 156 {
+		violations = append(violations, fmt.Sprintf("coverage entries=%d bodies=%d queries=%d paths=%d, want 384/157/76/156", len(stored), bodies, queries, paths))
+	}
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		t.Fatalf("Agent request contract coverage failed:\n%s", strings.Join(violations, "\n"))
+	}
+}
+
+func TestAIAgentRuntimeEnforcesEveryPathQueryAndBodyClassification(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	var violations []string
+	for _, operation := range service.catalog {
+		pathParams := agentContractTestObject(operation.PathSchema)
+		if err := validateAgentOperationParameters(operation, pathParams, nil); err != nil {
+			violations = append(violations, operation.Key+": valid path parameters: "+err.Error())
+		}
+		pathProperties, _ := operation.PathSchema["properties"].(map[string]any)
+		for name, rawSchema := range pathProperties {
+			invalid := make(map[string]any, len(pathParams))
+			for field, value := range pathParams {
+				invalid[field] = value
+			}
+			fieldSchema, _ := rawSchema.(map[string]any)
+			invalid[name] = agentContractInvalidTypeValue(fieldSchema)
+			if err := validateAgentOperationParameters(operation, invalid, nil); err == nil {
+				violations = append(violations, operation.Key+": accepted invalid path type for "+name)
+			}
+		}
+		invalidPath := make(map[string]any, len(pathParams)+1)
+		for name, value := range pathParams {
+			invalidPath[name] = value
+		}
+		invalidPath["__unknown_path"] = "value"
+		if err := validateAgentOperationParameters(operation, invalidPath, nil); err == nil {
+			violations = append(violations, operation.Key+": accepted unknown path parameter")
+		}
+
+		queryProperties, _ := operation.QuerySchema["properties"].(map[string]any)
+		for name, rawSchema := range queryProperties {
+			fieldSchema, _ := rawSchema.(map[string]any)
+			query := map[string]any{name: agentContractTestValue(fieldSchema)}
+			if err := validateAgentOperationParameters(operation, pathParams, query); err != nil {
+				violations = append(violations, operation.Key+": valid query "+name+": "+err.Error())
+			}
+			if err := validateAgentOperationParameters(operation, pathParams, map[string]any{name: agentContractInvalidTypeValue(fieldSchema)}); err == nil {
+				violations = append(violations, operation.Key+": accepted invalid query type for "+name)
+			}
+		}
+		if err := validateAgentOperationParameters(operation, pathParams, map[string]any{"__unknown_query": "value"}); err == nil {
+			violations = append(violations, operation.Key+": accepted unknown query parameter")
+		}
+		if len(operation.BodySchema) == 0 {
+			if err := validateAgentOperationBodyContract(operation, nil); err != nil {
+				violations = append(violations, operation.Key+": rejected omitted body: "+err.Error())
+			}
+			if err := validateAgentOperationBodyContract(operation, map[string]any{}); err == nil {
+				violations = append(violations, operation.Key+": accepted a body on a bodyless operation")
+			}
+		} else {
+			if err := validateAgentOperationBodyContract(operation, nil); err == nil {
+				violations = append(violations, operation.Key+": accepted an omitted required body")
+			}
+			if err := validateAgentOperationBodyContract(operation, agentContractTestObject(operation.BodySchema)); err != nil {
+				violations = append(violations, operation.Key+": generated contract-valid body: "+err.Error())
+			}
+		}
+		if len(operation.QueryExample) > 0 {
+			if err := validateAgentOperationParameters(operation, pathParams, operation.QueryExample); err != nil {
+				violations = append(violations, operation.Key+": query example: "+err.Error())
+			}
+		}
+	}
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		t.Fatalf("Agent runtime request contract enforcement failed:\n%s", strings.Join(violations, "\n"))
+	}
+}
+
+func agentContractTestObject(schema map[string]any) map[string]any {
+	result := make(map[string]any)
+	properties, _ := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]any)
+	for _, rawName := range required {
+		name := fmt.Sprint(rawName)
+		fieldSchema, _ := properties[name].(map[string]any)
+		result[name] = agentContractTestValue(fieldSchema)
+	}
+	groups, _ := schema["required_any"].([]any)
+	for _, rawGroup := range groups {
+		group, _ := rawGroup.([]any)
+		if len(group) == 0 {
+			continue
+		}
+		name := fmt.Sprint(group[0])
+		if _, exists := result[name]; !exists {
+			fieldSchema, _ := properties[name].(map[string]any)
+			value := agentContractTestValue(fieldSchema)
+			if items, ok := value.([]any); ok && len(items) == 0 {
+				itemSchema, _ := fieldSchema["items"].(map[string]any)
+				value = []any{agentContractTestValue(itemSchema)}
+			}
+			result[name] = value
+		}
+	}
+	return result
+}
+
+func agentContractTestValue(schema map[string]any) any {
+	if values, ok := schema["enum"].([]any); ok && len(values) > 0 {
+		return values[0]
+	}
+	switch schema["type"] {
+	case "boolean":
+		return true
+	case "integer", "number":
+		value := float64(0)
+		if minimum, ok := agentContractSchemaNumber(schema["minimum"]); ok {
+			value = minimum
+		}
+		if minimum, ok := agentContractSchemaNumber(schema["exclusiveMinimum"]); ok {
+			value = minimum + 1
+		}
+		return value
+	case "array":
+		count := 0
+		if minimum, ok := agentContractSchemaNumber(schema["minimum"]); ok {
+			count = int(minimum)
+		}
+		items, _ := schema["items"].(map[string]any)
+		result := make([]any, count)
+		for index := range result {
+			result[index] = agentContractTestValue(items)
+		}
+		return result
+	case "object":
+		return agentContractTestObject(schema)
+	default:
+		switch schema["format"] {
+		case "date-time":
+			return "2030-01-02T03:04:05Z"
+		case "date":
+			return "2030-01-02"
+		case "email":
+			return "admin@example.com"
+		case "url":
+			return "https://example.com"
+		case "semver":
+			return "1.2.3"
+		}
+		minimum := 1
+		if value, ok := agentContractSchemaNumber(schema["minimum"]); ok && int(value) > minimum {
+			minimum = int(value)
+		}
+		return strings.Repeat("x", minimum)
+	}
+}
+
+func agentContractInvalidTypeValue(schema map[string]any) any {
+	switch schema["type"] {
+	case "string":
+		return true
+	case "boolean", "integer", "number", "array", "object":
+		return "invalid-type"
+	default:
+		return nil
+	}
+}
+
 func TestAIAgentCatalogBodyExamplesMatchContracts(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
@@ -139,9 +367,7 @@ func TestAIAgentCatalogBodyExamplesMatchContracts(t *testing.T) {
 }
 
 func TestAIAgentContractsContainNoOpaqueConcreteSchemas(t *testing.T) {
-	var contracts map[string]struct {
-		BodySchema map[string]any `json:"body_schema"`
-	}
+	var contracts map[string]agentOperationContract
 	if err := json.Unmarshal(agentContractsJSON, &contracts); err != nil {
 		t.Fatalf("decode Agent contracts: %v", err)
 	}
@@ -151,7 +377,15 @@ func TestAIAgentContractsContainNoOpaqueConcreteSchemas(t *testing.T) {
 	}
 	var violations []string
 	for endpoint, contract := range contracts {
-		auditAgentContractSchema(endpoint, "body", contract.BodySchema, allowedUntyped, &violations)
+		if len(contract.BodySchema) > 0 {
+			auditAgentContractSchema(endpoint, "body", contract.BodySchema, allowedUntyped, &violations)
+		}
+		if len(contract.QuerySchema) > 0 {
+			auditAgentContractSchema(endpoint, "query", contract.QuerySchema, nil, &violations)
+		}
+		if len(contract.PathSchema) > 0 {
+			auditAgentContractSchema(endpoint, "path_params", contract.PathSchema, nil, &violations)
+		}
 	}
 	if len(violations) > 0 {
 		sort.Strings(violations)
