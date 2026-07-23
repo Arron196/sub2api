@@ -2995,7 +2995,8 @@
       "properties": {
         "allowed_groups": {
           "items": {
-            "type": "integer"
+            "type": "integer",
+            "exclusiveMinimum": 0
           },
           "type": "array"
         },
@@ -3042,7 +3043,8 @@
       "properties": {
         "allowed_groups": {
           "items": {
-            "type": "integer"
+            "type": "integer",
+            "exclusiveMinimum": 0
           },
           "type": "array"
         },

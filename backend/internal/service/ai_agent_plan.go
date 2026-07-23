@@ -172,11 +172,15 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 		if err == nil {
 			normalizedNodeBody, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, normalizedNodeBody)
 		}
-		if err == nil {
-			err = validateAgentOperationBodyContract(operation, normalizedNodeBody)
+		normalizedValidationBody := normalizedNodeBody
+		if err == nil && containsAgentPlanReference(normalizedNodeBody) {
+			normalizedValidationBody, err = resolveAgentPlanValue(normalizedNodeBody, nil, true)
 		}
 		if err == nil {
-			err = validateAgentOperationSemantics(operation.Method, path, normalizedNodeBody)
+			err = validateAgentOperationBodyContract(operation, normalizedValidationBody)
+		}
+		if err == nil {
+			err = validateAgentOperationSemantics(operation.Method, path, normalizedValidationBody)
 		}
 		if err == nil && !containsAgentPlanReference(normalizedNodeBody) {
 			err = s.validateAgentCrossResourceSemantics(ctx, actor, operation, normalizedNodeBody)

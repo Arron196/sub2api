@@ -379,6 +379,36 @@ func TestAIAgentAccountDefaultsPersistInExecutionPlan(t *testing.T) {
 	}
 }
 
+func TestAIAgentPlanAllowsCreatedGroupReferenceInUserAllowedGroups(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	plan, pending, err := service.prepareAgentExecutionPlan(context.Background(), AIAgentActor{UserID: 1}, "create user and exclusive group", nil, agentPlanArguments{
+		Title: "Create user and group", FailurePolicy: "stop_on_failure", Nodes: []agentPlanNodeArgument{
+			{ID: "create_group", EndpointKey: "POST:/admin/groups", Body: map[string]any{
+				"name": "exclusive group", "platform": "openai", "is_exclusive": true, "rate_multiplier": 0.11,
+				"daily_limit_usd": 150.0, "weekly_limit_usd": 800.0, "monthly_limit_usd": 1600.0,
+			}},
+			{ID: "create_user", EndpointKey: "POST:/admin/users", DependsOn: []string{"create_group"}, Body: map[string]any{
+				"username": "new-user", "email": "new-user@example.com", "password": "secret-password",
+				"allowed_groups": []any{map[string]any{"$ref": "create_group.resource_id"}},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("prepareAgentExecutionPlan() error = %v", err)
+	}
+	if plan == nil || pending == nil || len(plan.Nodes) != 2 {
+		t.Fatalf("plan = %#v, pending = %#v", plan, pending)
+	}
+	userBody, _ := plan.Nodes[1].Body.(map[string]any)
+	groups, _ := userBody["allowed_groups"].([]any)
+	if len(groups) != 1 || !containsAgentPlanReference(groups[0]) {
+		t.Fatalf("stored user group reference = %#v", userBody)
+	}
+}
+
 func TestAIAgentInvalidPlanCannotDowngradeToSeparateWrites(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
