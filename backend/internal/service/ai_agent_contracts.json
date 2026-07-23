@@ -876,7 +876,56 @@
           "type": "string"
         },
         "targeting": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "any_of": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "all_of": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "subscription",
+                            "balance"
+                          ]
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "in",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                            "eq"
+                          ]
+                        },
+                        "group_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer"
+                          }
+                        },
+                        "value": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "operator",
+                        "type"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
         "title": {
           "type": "string"
@@ -2067,7 +2116,24 @@
           "type": "boolean"
         },
         "messages_dispatch_model_config": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "opus_mapped_model": {
+              "type": "string"
+            },
+            "sonnet_mapped_model": {
+              "type": "string"
+            },
+            "haiku_mapped_model": {
+              "type": "string"
+            },
+            "exact_model_mappings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
         },
         "model_routing": {
           "additionalProperties": {
@@ -2082,7 +2148,18 @@
           "type": "boolean"
         },
         "models_list_config": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         },
         "monthly_limit_usd": {
           "type": "number",
@@ -2117,10 +2194,22 @@
           "type": "number"
         },
         "reasoning_effort_mappings": {
+          "type": "array",
           "items": {
-            "type": "object"
-          },
-          "type": "array"
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          }
         },
         "require_oauth_only": {
           "type": "boolean"
@@ -2346,10 +2435,6 @@
         "cooldown_minutes": {
           "type": "integer"
         },
-        "created_at": {
-          "format": "date-time",
-          "type": "string"
-        },
         "description": {
           "type": "string"
         },
@@ -2359,13 +2444,6 @@
         "filters": {
           "additionalProperties": {},
           "type": "object"
-        },
-        "id": {
-          "type": "integer"
-        },
-        "last_triggered_at": {
-          "format": "date-time",
-          "type": "string"
         },
         "metric_type": {
           "type": "string",
@@ -2419,10 +2497,6 @@
         },
         "threshold": {
           "type": "number"
-        },
-        "updated_at": {
-          "format": "date-time",
-          "type": "string"
         },
         "window_minutes": {
           "type": "integer"
@@ -3074,12 +3148,11 @@
         "fields": {
           "properties": {
             "expires_at": {
-              "properties": {},
-              "type": "object"
+              "type": "string",
+              "format": "date-time"
             },
             "group_id": {
-              "properties": {},
-              "type": "object"
+              "type": "integer"
             },
             "notes": {
               "type": "string"
@@ -4016,7 +4089,56 @@
           "type": "string"
         },
         "targeting": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "any_of": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "all_of": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "subscription",
+                            "balance"
+                          ]
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "in",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                            "eq"
+                          ]
+                        },
+                        "group_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer"
+                          }
+                        },
+                        "value": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "operator",
+                        "type"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         },
         "title": {
           "type": "string"
@@ -4852,7 +4974,24 @@
           "type": "boolean"
         },
         "messages_dispatch_model_config": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "opus_mapped_model": {
+              "type": "string"
+            },
+            "sonnet_mapped_model": {
+              "type": "string"
+            },
+            "haiku_mapped_model": {
+              "type": "string"
+            },
+            "exact_model_mappings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
         },
         "model_routing": {
           "additionalProperties": {
@@ -4867,7 +5006,18 @@
           "type": "boolean"
         },
         "models_list_config": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         },
         "monthly_limit_usd": {
           "type": "number",
@@ -4902,10 +5052,22 @@
           "type": "number"
         },
         "reasoning_effort_mappings": {
+          "type": "array",
           "items": {
-            "type": "object"
-          },
-          "type": "array"
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          }
         },
         "require_oauth_only": {
           "type": "boolean"
@@ -5127,10 +5289,6 @@
         "cooldown_minutes": {
           "type": "integer"
         },
-        "created_at": {
-          "format": "date-time",
-          "type": "string"
-        },
         "description": {
           "type": "string"
         },
@@ -5140,13 +5298,6 @@
         "filters": {
           "additionalProperties": {},
           "type": "object"
-        },
-        "id": {
-          "type": "integer"
-        },
-        "last_triggered_at": {
-          "format": "date-time",
-          "type": "string"
         },
         "metric_type": {
           "type": "string",
@@ -5200,10 +5351,6 @@
         },
         "threshold": {
           "type": "number"
-        },
-        "updated_at": {
-          "format": "date-time",
-          "type": "string"
         },
         "window_minutes": {
           "type": "integer"
@@ -5408,17 +5555,8 @@
         "sampling_thereafter": {
           "type": "integer"
         },
-        "source": {
-          "type": "string"
-        },
         "stacktrace_level": {
           "type": "string"
-        },
-        "updated_at": {
-          "type": "string"
-        },
-        "updated_by_user_id": {
-          "type": "integer"
         }
       },
       "type": "object"
