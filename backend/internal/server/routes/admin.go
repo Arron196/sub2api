@@ -127,21 +127,24 @@ func registerAIAgentRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	{
 		agent.GET("/config", h.Admin.AIAgent.GetConfig)
 		agent.PUT("/config", h.Admin.AIAgent.UpdateConfig)
-		agent.GET("/models", h.Admin.AIAgent.ListModels)
 		agent.GET("/conversations", h.Admin.AIAgent.ListConversations)
-		agent.POST("/conversations", h.Admin.AIAgent.CreateConversation)
 		agent.DELETE("/conversations/:conversationID", h.Admin.AIAgent.DeleteConversation)
 		agent.GET("/session", h.Admin.AIAgent.GetSession)
 		agent.DELETE("/session", h.Admin.AIAgent.ClearSession)
-		agent.POST("/chat", h.Admin.AIAgent.Chat)
 		agent.POST("/stop", h.Admin.AIAgent.Stop)
-		agent.POST("/actions/:id/confirm", h.Admin.AIAgent.Confirm)
-		agent.POST("/actions/:id/confirm-sensitive", gin.HandlerFunc(stepUpAuth), h.Admin.AIAgent.ConfirmSensitive)
 		agent.DELETE("/actions/:id", h.Admin.AIAgent.Cancel)
-		agent.GET("/rollbacks/:id/preview", h.Admin.AIAgent.PreviewRollback)
-		agent.POST("/rollbacks/:id", h.Admin.AIAgent.Rollback)
-		agent.POST("/rollbacks/:id/confirm-sensitive", gin.HandlerFunc(stepUpAuth), h.Admin.AIAgent.RollbackSensitive)
-		agent.POST("/rollbacks/:id/assist", h.Admin.AIAgent.AssistRollback)
+
+		enabled := agent.Group("")
+		enabled.Use(h.Admin.AIAgent.RequireEnabled)
+		enabled.GET("/models", h.Admin.AIAgent.ListModels)
+		enabled.POST("/conversations", h.Admin.AIAgent.CreateConversation)
+		enabled.POST("/chat", h.Admin.AIAgent.Chat)
+		enabled.POST("/actions/:id/confirm", h.Admin.AIAgent.Confirm)
+		enabled.POST("/actions/:id/confirm-sensitive", gin.HandlerFunc(stepUpAuth), h.Admin.AIAgent.ConfirmSensitive)
+		enabled.GET("/rollbacks/:id/preview", h.Admin.AIAgent.PreviewRollback)
+		enabled.POST("/rollbacks/:id", h.Admin.AIAgent.Rollback)
+		enabled.POST("/rollbacks/:id/confirm-sensitive", gin.HandlerFunc(stepUpAuth), h.Admin.AIAgent.RollbackSensitive)
+		enabled.POST("/rollbacks/:id/assist", h.Admin.AIAgent.AssistRollback)
 	}
 }
 

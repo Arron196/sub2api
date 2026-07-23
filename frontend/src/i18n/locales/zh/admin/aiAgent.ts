@@ -1,6 +1,13 @@
 export default {
   aiAgent: {
     title: 'AI Agent',
+    enabled: '启用 AI Agent',
+    enabledHint: '关闭后停止正在运行的任务，并从管理侧边栏隐藏 Agent 入口。',
+    enable: '启用 Agent',
+    enabledSuccess: 'AI Agent 已启用',
+    disabled: '已关闭',
+    disabledTitle: 'AI Agent 已关闭',
+    disabledDescription: '启用后才能使用模型、对话、执行计划和回滚能力。历史记录会保留。',
     noModel: '尚未选择模型',
     tools: '个已审计工具',
     autoMode: '全自动',

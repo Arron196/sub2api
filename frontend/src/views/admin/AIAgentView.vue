@@ -15,22 +15,23 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span v-if="config?.response_cache" class="badge badge-success">
+            <span v-if="config && !config.enabled" class="badge badge-warning">{{ t('admin.aiAgent.disabled') }}</span>
+            <span v-if="config?.enabled && config.response_cache" class="badge badge-success">
               {{ t('admin.aiAgent.responseCache') }}
             </span>
-            <span :class="['badge', config?.streaming ? 'badge-success' : 'badge-warning']">
+            <span v-if="config?.enabled" :class="['badge', config.streaming ? 'badge-success' : 'badge-warning']">
               {{ config?.streaming ? t('admin.aiAgent.streamingMode') : t('admin.aiAgent.nonStreamingMode') }}
             </span>
-            <span :class="['badge', config?.auto_approve ? 'badge-warning' : 'badge-success']">
+            <span v-if="config?.enabled" :class="['badge', config.auto_approve ? 'badge-warning' : 'badge-success']">
               {{ config?.auto_approve ? t('admin.aiAgent.autoMode') : t('admin.aiAgent.supervisedMode') }}
             </span>
-            <button class="btn btn-secondary px-3" :title="t('admin.aiAgent.newConversation')" @click="createConversation">
+            <button v-if="config?.enabled" class="btn btn-secondary px-3" :title="t('admin.aiAgent.newConversation')" @click="createConversation">
               <Icon name="plus" size="sm" />
             </button>
-            <button class="btn btn-secondary px-3" :title="t('admin.aiAgent.history')" @click="showHistory = true">
+            <button v-if="config?.enabled" class="btn btn-secondary px-3" :title="t('admin.aiAgent.history')" @click="showHistory = true">
               <Icon name="clock" size="sm" />
             </button>
-            <button class="btn btn-secondary px-3" :title="t('admin.aiAgent.deleteConversation')" :disabled="!conversationId" @click="deleteCurrentConversation">
+            <button v-if="config?.enabled" class="btn btn-secondary px-3" :title="t('admin.aiAgent.deleteConversation')" :disabled="!conversationId" @click="deleteCurrentConversation">
               <Icon name="trash" size="sm" />
             </button>
             <button class="btn btn-secondary px-3" :title="t('admin.aiAgent.settings')" @click="showSettings = true">
@@ -40,7 +41,19 @@
         </div>
       </header>
 
-      <div class="mx-auto grid w-full max-w-[1500px] flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden">
+      <div v-if="config && !config.enabled" class="mx-auto flex w-full max-w-[1500px] flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+        <div class="flex h-14 w-14 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:text-dark-300">
+          <Icon name="play" size="xl" />
+        </div>
+        <h2 class="mt-5 text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.aiAgent.disabledTitle') }}</h2>
+        <p class="mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-dark-400">{{ t('admin.aiAgent.disabledDescription') }}</p>
+        <div class="mt-6 flex flex-wrap justify-center gap-2">
+          <button class="btn btn-primary" :disabled="settingsSaving" @click="enableAgent"><Icon name="play" size="sm" />{{ t('admin.aiAgent.enable') }}</button>
+          <button class="btn btn-secondary" @click="showSettings = true"><Icon name="cog" size="sm" />{{ t('admin.aiAgent.settings') }}</button>
+        </div>
+      </div>
+
+      <div v-else-if="config?.enabled" class="mx-auto grid w-full max-w-[1500px] flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden">
         <main class="flex min-h-[620px] min-w-0 flex-col border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900 lg:min-h-0 lg:border-r">
           <div ref="messagePane" class="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-6 pb-32 sm:px-8 lg:pb-6">
             <div v-if="!messages.length" class="mx-auto flex max-w-xl flex-col items-center justify-center py-20 text-center">
@@ -198,10 +211,15 @@
           </section>
         </aside>
       </div>
+      <div v-else class="flex flex-1 items-center justify-center text-sm text-gray-500 dark:text-dark-400">{{ t('common.loading') }}</div>
     </div>
 
     <BaseDialog :show="showSettings" :title="t('admin.aiAgent.settings')" width="normal" @close="showSettings = false">
       <form class="space-y-5" @submit.prevent="saveSettings">
+        <label class="flex items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-dark-700">
+          <span><span class="block text-sm font-medium text-gray-800 dark:text-dark-200">{{ t('admin.aiAgent.enabled') }}</span><span class="mt-1 block text-xs text-gray-500 dark:text-dark-400">{{ t('admin.aiAgent.enabledHint') }}</span></span>
+          <input v-model="settingsForm.enabled" type="checkbox" class="mt-1 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500" />
+        </label>
         <div>
           <label class="input-label">{{ t('admin.aiAgent.protocol') }}</label>
           <div class="grid grid-cols-3 gap-1 rounded-md bg-gray-100 p-1 dark:bg-dark-800" role="radiogroup" :aria-label="t('admin.aiAgent.protocol')">
@@ -514,7 +532,8 @@ watch([() => pending.value?.plan?.id, () => conversationStatus.value], ([planID,
   }
 })
 
-const settingsForm = reactive<{ base_url: string; model: string; api_key: string; auto_approve: boolean; protocol: AIAgentProtocol; thinking_mode: string; context_window: string; process_display: 'off' | 'compact' | 'full' }>({
+const settingsForm = reactive<{ enabled: boolean; base_url: string; model: string; api_key: string; auto_approve: boolean; protocol: AIAgentProtocol; thinking_mode: string; context_window: string; process_display: 'off' | 'compact' | 'full' }>({
+  enabled: true,
   base_url: '',
   model: '',
   api_key: '',
@@ -545,6 +564,7 @@ const suggestions = computed(() => [
 ])
 
 function syncSettingsForm() {
+  settingsForm.enabled = config.value?.enabled ?? true
   settingsForm.base_url = config.value?.base_url || ''
   settingsForm.model = config.value?.model || ''
   settingsForm.api_key = ''
@@ -604,20 +624,45 @@ async function pollAgentState() {
   }
 }
 
+function publishAIAgentAvailability() {
+  if (!config.value) return
+  window.dispatchEvent(new CustomEvent('ai-agent-availability-changed', { detail: { enabled: config.value.enabled } }))
+}
+
+async function loadAgentWorkspace() {
+  const list = await refreshConversationList()
+  const savedID = localStorage.getItem(conversationStorageKey)
+  const targetID = (savedID && list.conversations.some(item => item.id === savedID) ? savedID : '') || list.active_id || list.conversations[0]?.id
+  const session = targetID ? await aiAgentAPI.getSession(targetID) : await aiAgentAPI.createConversation()
+  applySession(session)
+  await refreshConversationList()
+  await scrollToBottom()
+  schedulePoll()
+}
+
 async function loadInitial() {
   try {
     config.value = await aiAgentAPI.getConfig()
     syncSettingsForm()
-    const list = await refreshConversationList()
-    const savedID = localStorage.getItem(conversationStorageKey)
-    const targetID = (savedID && list.conversations.some(item => item.id === savedID) ? savedID : '') || list.active_id || list.conversations[0]?.id
-    const session = targetID ? await aiAgentAPI.getSession(targetID) : await aiAgentAPI.createConversation()
-    applySession(session)
-    await refreshConversationList()
-    await scrollToBottom()
-    schedulePoll()
+    publishAIAgentAvailability()
+    if (config.value.enabled) await loadAgentWorkspace()
   } catch (error: any) {
     appStore.showError(agentErrorMessage(error, t('admin.aiAgent.loadFailed')))
+  }
+}
+
+async function enableAgent() {
+  settingsSaving.value = true
+  try {
+    config.value = await aiAgentAPI.updateConfig({ enabled: true })
+    syncSettingsForm()
+    publishAIAgentAvailability()
+    await loadAgentWorkspace()
+    appStore.showSuccess(t('admin.aiAgent.enabledSuccess'))
+  } catch (error: any) {
+    appStore.showError(agentErrorMessage(error, t('admin.aiAgent.settingsFailed')))
+  } finally {
+    settingsSaving.value = false
   }
 }
 
@@ -798,8 +843,10 @@ async function deleteCurrentConversation() {
 
 async function saveSettings() {
   settingsSaving.value = true
+  const wasEnabled = config.value?.enabled ?? true
   try {
     config.value = await aiAgentAPI.updateConfig({
+      enabled: settingsForm.enabled,
       base_url: settingsForm.base_url,
       model: settingsForm.model,
       auto_approve: settingsForm.auto_approve,
@@ -810,6 +857,14 @@ async function saveSettings() {
       ...(settingsForm.api_key ? { api_key: settingsForm.api_key } : {})
     })
     syncSettingsForm()
+    publishAIAgentAvailability()
+    if (!config.value.enabled) {
+      if (pollTimer) clearTimeout(pollTimer)
+      showPlanConfirmation.value = false
+      showRollbackConfirmation.value = false
+    } else if (!wasEnabled || !conversationId.value) {
+      await loadAgentWorkspace()
+    }
     showSettings.value = false
     appStore.showSuccess(t('admin.aiAgent.settingsSaved'))
   } catch (error: any) {

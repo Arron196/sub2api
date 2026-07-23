@@ -25,6 +25,7 @@ import (
 )
 
 const (
+	agentSettingEnabled        = "ai_agent_enabled"
 	agentSettingBaseURL        = "ai_agent_base_url"
 	agentSettingModel          = "ai_agent_model"
 	agentSettingAPIKey         = "ai_agent_api_key_encrypted"
@@ -49,6 +50,7 @@ var agentCatalogJSON []byte
 var agentContractsJSON []byte
 
 var (
+	ErrAIAgentDisabled        = errors.New("AI Agent is disabled")
 	agentContextWindowPattern = regexp.MustCompile(`^([1-9][0-9]*)([km]?)$`)
 	agentSemverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 )
@@ -104,6 +106,7 @@ type agentSuggestedOperation struct {
 }
 
 type AIAgentConfig struct {
+	Enabled             bool   `json:"enabled"`
 	BaseURL             string `json:"base_url"`
 	Model               string `json:"model"`
 	APIKeySet           bool   `json:"api_key_set"`
@@ -119,6 +122,7 @@ type AIAgentConfig struct {
 }
 
 type UpdateAIAgentConfigInput struct {
+	Enabled        *bool   `json:"enabled"`
 	BaseURL        *string `json:"base_url"`
 	Model          *string `json:"model"`
 	APIKey         *string `json:"api_key"`
@@ -385,6 +389,7 @@ func NewAIAgentService(settings SettingRepository, encryptor SecretEncryptor, cf
 
 func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 	values, err := s.settings.GetMultiple(ctx, []string{
+		agentSettingEnabled,
 		agentSettingBaseURL,
 		agentSettingModel,
 		agentSettingAPIKey,
@@ -402,6 +407,7 @@ func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 	processDisplay, _ := normalizeAIAgentProcessDisplay(values[agentSettingProcessDisplay])
 	contextWindow, contextWindowTokens, _ := normalizeAIAgentContextWindow(values[agentSettingContextWindow])
 	return AIAgentConfig{
+		Enabled:             agentEnabledFromSetting(values[agentSettingEnabled]),
 		BaseURL:             values[agentSettingBaseURL],
 		Model:               values[agentSettingModel],
 		APIKeySet:           values[agentSettingAPIKey] != "",
@@ -419,6 +425,9 @@ func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 
 func (s *AIAgentService) UpdateConfig(ctx context.Context, input UpdateAIAgentConfigInput) (AIAgentConfig, error) {
 	updates := make(map[string]string)
+	if input.Enabled != nil {
+		updates[agentSettingEnabled] = strconv.FormatBool(*input.Enabled)
+	}
 	if input.BaseURL != nil {
 		normalized, err := normalizeAIAgentBaseURL(*input.BaseURL)
 		if err != nil {
@@ -484,7 +493,45 @@ func (s *AIAgentService) UpdateConfig(ctx context.Context, input UpdateAIAgentCo
 			return AIAgentConfig{}, err
 		}
 	}
+	if input.Enabled != nil && !*input.Enabled {
+		s.stopAllAgentJobs()
+	}
 	return s.Config(ctx)
+}
+
+func agentEnabledFromSetting(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(raw)
+	return err == nil && enabled
+}
+
+func (s *AIAgentService) requireEnabled(ctx context.Context) (AIAgentConfig, error) {
+	if s.settings == nil {
+		return AIAgentConfig{Enabled: true}, nil
+	}
+	config, err := s.Config(ctx)
+	if err != nil {
+		return AIAgentConfig{}, err
+	}
+	if !config.Enabled {
+		return AIAgentConfig{}, ErrAIAgentDisabled
+	}
+	return config, nil
+}
+
+func (s *AIAgentService) stopAllAgentJobs() {
+	s.jobsMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.jobs))
+	for _, cancel := range s.jobs {
+		cancels = append(cancels, cancel)
+	}
+	s.jobsMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 }
 
 func normalizeAIAgentProtocol(raw string) (string, error) {
@@ -613,7 +660,7 @@ func (s *AIAgentService) modelAPIKey(ctx context.Context) (string, error) {
 }
 
 func (s *AIAgentService) ListModels(ctx context.Context) ([]string, error) {
-	config, err := s.Config(ctx)
+	config, err := s.requireEnabled(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -722,7 +769,7 @@ func (s *AIAgentService) startChat(ctx context.Context, actor AIAgentActor, conv
 	if prompt == "" || len(prompt) > 16000 {
 		return AIAgentSessionSnapshot{}, errors.New("message must contain 1 to 16000 characters")
 	}
-	config, err := s.Config(ctx)
+	config, err := s.requireEnabled(ctx)
 	if err != nil {
 		return AIAgentSessionSnapshot{}, err
 	}
@@ -3849,6 +3896,9 @@ func promoteAgentPending(session *aiAgentSession) {
 }
 
 func (s *AIAgentService) Confirm(ctx context.Context, actor AIAgentActor, conversationID, actionID string, stepUpConfirmed bool) (any, error) {
+	if _, err := s.requireEnabled(ctx); err != nil {
+		return nil, err
+	}
 	session, err := s.conversation(ctx, actor.UserID, conversationID, false)
 	if err != nil {
 		return nil, err

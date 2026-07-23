@@ -32,6 +32,21 @@ func (h *AIAgentHandler) actor(c *gin.Context) (service.AIAgentActor, bool) {
 	}, true
 }
 
+func (h *AIAgentHandler) RequireEnabled(c *gin.Context) {
+	config, err := h.service.Config(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		c.Abort()
+		return
+	}
+	if !config.Enabled {
+		response.Error(c, http.StatusServiceUnavailable, service.ErrAIAgentDisabled.Error())
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
 func (h *AIAgentHandler) GetConfig(c *gin.Context) {
 	config, err := h.service.Config(c.Request.Context())
 	if err != nil {

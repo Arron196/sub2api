@@ -1344,13 +1344,48 @@ func TestAIAgentContextWindowParsingAndPersistence(t *testing.T) {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
 	config, err := service.Config(context.Background())
-	if err != nil || config.ContextWindow != "150k" || config.ContextWindowTokens != 150000 {
+	if err != nil || !config.Enabled || config.ContextWindow != "150k" || config.ContextWindowTokens != 150000 {
 		t.Fatalf("default context config = %#v, %v", config, err)
 	}
 	value := "1m"
 	config, err = service.UpdateConfig(context.Background(), UpdateAIAgentConfigInput{ContextWindow: &value})
 	if err != nil || config.ContextWindow != "1m" || config.ContextWindowTokens != 1000000 || settings.values[agentSettingContextWindow] != "1m" {
 		t.Fatalf("updated context config = %#v, stored=%q, err=%v", config, settings.values[agentSettingContextWindow], err)
+	}
+}
+
+func TestAIAgentEnabledDefaultsOnAndDisablingStopsWork(t *testing.T) {
+	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	config, err := service.Config(context.Background())
+	if err != nil || !config.Enabled {
+		t.Fatalf("default config = %#v, err=%v", config, err)
+	}
+	jobContext, cancel := context.WithCancel(context.Background())
+	service.jobs["test-job"] = cancel
+	disabled := false
+	config, err = service.UpdateConfig(context.Background(), UpdateAIAgentConfigInput{Enabled: &disabled})
+	if err != nil || config.Enabled || settings.values[agentSettingEnabled] != "false" {
+		t.Fatalf("disabled config = %#v, stored=%q, err=%v", config, settings.values[agentSettingEnabled], err)
+	}
+	select {
+	case <-jobContext.Done():
+	default:
+		t.Fatal("disabling the Agent did not cancel running work")
+	}
+	if _, err := service.CreateConversation(context.Background(), 1); !errors.Is(err, ErrAIAgentDisabled) {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	if _, err := service.StartChat(context.Background(), AIAgentActor{UserID: 1}, "", "hello"); !errors.Is(err, ErrAIAgentDisabled) {
+		t.Fatalf("StartChat() error = %v", err)
+	}
+	enabled := true
+	config, err = service.UpdateConfig(context.Background(), UpdateAIAgentConfigInput{Enabled: &enabled})
+	if err != nil || !config.Enabled || settings.values[agentSettingEnabled] != "true" {
+		t.Fatalf("re-enabled config = %#v, stored=%q, err=%v", config, settings.values[agentSettingEnabled], err)
 	}
 }
 

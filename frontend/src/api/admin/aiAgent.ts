@@ -3,6 +3,7 @@ import { apiClient } from '../client'
 export type AIAgentProtocol = 'chat_completions' | 'responses' | 'messages'
 
 export interface AIAgentConfig {
+  enabled: boolean
   base_url: string
   model: string
   api_key_set: boolean
@@ -167,6 +168,7 @@ export interface AIAgentSession {
 }
 
 export interface UpdateAIAgentConfigInput {
+  enabled?: boolean
   base_url?: string
   model?: string
   api_key?: string

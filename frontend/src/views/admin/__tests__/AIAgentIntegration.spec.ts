@@ -11,6 +11,21 @@ describe('AI Agent admin integration', () => {
     expect(read('components/layout/AppSidebar.vue')).toContain("path: '/admin/ai-agent'")
   })
 
+  it('supports a backend-enforced availability switch and hides disabled navigation', () => {
+    const view = read('views/admin/AIAgentView.vue')
+    const sidebar = read('components/layout/AppSidebar.vue')
+    const settings = read('views/admin/SettingsView.vue')
+    const api = read('api/admin/aiAgent.ts')
+    expect(api).toContain('enabled: boolean')
+    expect(view).toContain('v-model="settingsForm.enabled"')
+    expect(view).toContain('config && !config.enabled')
+    expect(view).toContain("new CustomEvent('ai-agent-availability-changed'")
+    expect(sidebar).toContain('featureFlag: () => aiAgentEnabled.value ?? false')
+    expect(sidebar).toContain("aiAgentAPI.getConfig()")
+    expect(settings).toContain('updateAIAgentAvailability')
+    expect(settings).toContain(':model-value="aiAgentEnabled"')
+  })
+
   it('keeps writes behind an explicit confirmation surface', () => {
     const view = read('views/admin/AIAgentView.vue')
     expect(view).toContain('confirmPending')

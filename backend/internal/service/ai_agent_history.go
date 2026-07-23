@@ -146,6 +146,9 @@ func (s *AIAgentService) conversation(ctx context.Context, userID int64, convers
 }
 
 func (s *AIAgentService) CreateConversation(ctx context.Context, userID int64) (AIAgentSessionSnapshot, error) {
+	if _, err := s.requireEnabled(ctx); err != nil {
+		return AIAgentSessionSnapshot{}, err
+	}
 	conversation, err := s.conversation(ctx, userID, uuid.NewString(), true)
 	if err != nil {
 		return AIAgentSessionSnapshot{}, err

@@ -659,6 +659,9 @@ func publicAgentRollbackField(field AIAgentRollbackFieldPreview) AIAgentRollback
 }
 
 func (s *AIAgentService) PreviewRollback(ctx context.Context, actor AIAgentActor, conversationID, rollbackID string) (AIAgentRollbackPreview, error) {
+	if _, err := s.requireEnabled(ctx); err != nil {
+		return AIAgentRollbackPreview{}, err
+	}
 	_, rollback, err := s.agentRollbackRecord(ctx, actor.UserID, conversationID, rollbackID)
 	if err != nil {
 		return AIAgentRollbackPreview{}, err
@@ -750,6 +753,9 @@ func (s *AIAgentService) executeAgentRollbackRecord(ctx context.Context, actor A
 }
 
 func (s *AIAgentService) Rollback(ctx context.Context, actor AIAgentActor, conversationID, rollbackID string, stepUpConfirmed ...bool) (any, error) {
+	if _, err := s.requireEnabled(ctx); err != nil {
+		return nil, err
+	}
 	session, rollback, err := s.agentRollbackRecord(ctx, actor.UserID, conversationID, rollbackID)
 	if err != nil {
 		return nil, err
@@ -888,6 +894,9 @@ func agentRollbackPathParameters(operation AgentCatalogOperation, actualPath str
 }
 
 func (s *AIAgentService) AssistRollback(ctx context.Context, actor AIAgentActor, conversationID, rollbackID, instruction string) (AIAgentSessionSnapshot, error) {
+	if _, err := s.requireEnabled(ctx); err != nil {
+		return AIAgentSessionSnapshot{}, err
+	}
 	preview, err := s.PreviewRollback(ctx, actor, conversationID, rollbackID)
 	if err != nil {
 		return AIAgentSessionSnapshot{}, err

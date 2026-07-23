@@ -1,6 +1,13 @@
 export default {
   aiAgent: {
     title: 'AI Agent',
+    enabled: 'Enable AI Agent',
+    enabledHint: 'Disabling stops running work and hides the Agent from the admin sidebar.',
+    enable: 'Enable Agent',
+    enabledSuccess: 'AI Agent enabled',
+    disabled: 'Disabled',
+    disabledTitle: 'AI Agent is disabled',
+    disabledDescription: 'Enable it to use models, conversations, execution plans, and rollback. Existing history is retained.',
     noModel: 'No model selected',
     tools: 'audited tools',
     autoMode: 'Automatic',
