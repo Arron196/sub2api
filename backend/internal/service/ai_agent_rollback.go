@@ -272,7 +272,47 @@ func (s *AIAgentService) prepareAgentCreateRollback(ctx context.Context, actor A
 	if pending.Method != http.MethodPost {
 		return nil
 	}
-	outputs := agentPlanOutputs(result)
+	resources := agentCreatedResourceObjects(result)
+	rollbacks := make([]AIAgentRollback, 0, len(resources))
+	for _, resource := range resources {
+		if rollback := s.prepareAgentCreatedResourceRollback(ctx, actor, pending, resource); rollback != nil {
+			rollbacks = append(rollbacks, *rollback)
+		}
+	}
+	if len(rollbacks) == 0 {
+		return nil
+	}
+	if len(rollbacks) == 1 {
+		return &rollbacks[0]
+	}
+	now := time.Now()
+	return &AIAgentRollback{
+		ID: uuid.NewString(), Operation: pending.Operation, Strategy: agentRollbackStrategyPlan, Status: "available",
+		Resource: pending.Resource, TargetLabel: pending.Operation, Method: "PLAN", Path: pending.Path, Children: rollbacks,
+		IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func agentCreatedResourceObjects(result any) []map[string]any {
+	value := unwrapAgentData(result)
+	switch typed := value.(type) {
+	case map[string]any:
+		return []map[string]any{typed}
+	case []any:
+		resources := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if resource, ok := item.(map[string]any); ok {
+				resources = append(resources, resource)
+			}
+		}
+		return resources
+	default:
+		return nil
+	}
+}
+
+func (s *AIAgentService) prepareAgentCreatedResourceRollback(ctx context.Context, actor AIAgentActor, pending *AIAgentPendingAction, resource map[string]any) *AIAgentRollback {
+	outputs := agentPlanOutputs(resource)
 	resourceID := outputs["resource_id"]
 	if resourceID == nil {
 		return nil
@@ -319,13 +359,34 @@ func (s *AIAgentService) prepareAgentCreateRollback(ctx context.Context, actor A
 
 func (s *AIAgentService) findAgentDeleteCompensation(collectionPath string, resourceID any) (AgentCatalogOperation, string, bool) {
 	collectionPath = strings.TrimSuffix(collectionPath, "/")
+	if operation, path, ok := s.matchAgentDeleteCompensation(collectionPath, "", resourceID, true); ok {
+		return operation, path, true
+	}
+	var sourceModule string
 	for _, operation := range s.catalog {
-		if operation.Method != http.MethodDelete || len(operation.PathParams) != 1 {
+		if operation.Method != http.MethodPost || strings.TrimSuffix(operation.Path, "/") != collectionPath {
+			continue
+		}
+		title := strings.ToLower(operation.Title)
+		if strings.Contains(title, "创建") || strings.Contains(title, "生成") || strings.Contains(title, "duplicate") {
+			sourceModule = operation.Module
+		}
+		break
+	}
+	if sourceModule == "" {
+		return AgentCatalogOperation{}, "", false
+	}
+	return s.matchAgentDeleteCompensation(collectionPath, sourceModule, resourceID, false)
+}
+
+func (s *AIAgentService) matchAgentDeleteCompensation(sourcePath, sourceModule string, resourceID any, exact bool) (AgentCatalogOperation, string, bool) {
+	for _, operation := range s.catalog {
+		if operation.Method != http.MethodDelete || len(operation.PathParams) != 1 || (sourceModule != "" && operation.Module != sourceModule) {
 			continue
 		}
 		parameter := operation.PathParams[0]
-		marker := "/:" + parameter
-		if strings.TrimSuffix(operation.Path, marker) != collectionPath {
+		collectionPath := strings.TrimSuffix(operation.Path, "/:"+parameter)
+		if (exact && collectionPath != sourcePath) || (!exact && !strings.HasPrefix(sourcePath, collectionPath+"/")) {
 			continue
 		}
 		path, err := renderAgentOperationPath(operation, map[string]any{parameter: resourceID})

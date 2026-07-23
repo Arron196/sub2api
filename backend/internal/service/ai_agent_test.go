@@ -661,6 +661,50 @@ func TestAIAgentExecutionPlanStopsDependentsAndCompensates(t *testing.T) {
 	}
 }
 
+func TestAIAgentCreateRollbackSupportsArrayResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method != http.MethodGet || !strings.HasPrefix(request.URL.Path, "/api/v1/admin/redeem-codes/") {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		id := strings.TrimPrefix(request.URL.Path, "/api/v1/admin/redeem-codes/")
+		_, _ = fmt.Fprintf(writer, `{"code":0,"data":{"id":%s,"code":"code-%s","type":"subscription","status":"unused","group_id":3,"validity_days":30}}`, id, id)
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	_, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	internalAuth, _ := NewAgentInternalAuth()
+	service, err := NewAIAgentService(nil, aiAgentTestEncryptor{}, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	service.client = server.Client()
+	pending := &AIAgentPendingAction{
+		Operation: "Generate redeem codes", Resource: "redeem_codes", Method: http.MethodPost, Path: "/admin/redeem-codes/generate",
+		Body: map[string]any{"count": float64(2), "type": "subscription", "group_id": float64(3), "validity_days": float64(30)},
+	}
+	created := func(id float64) map[string]any {
+		return map[string]any{"id": id, "code": fmt.Sprintf("code-%.0f", id), "type": "subscription", "status": "unused", "group_id": float64(3), "validity_days": float64(30)}
+	}
+
+	single := service.prepareAgentCreateRollback(context.Background(), AIAgentActor{UserID: 1}, pending, map[string]any{"data": []any{created(3)}})
+	if single == nil || single.Strategy != agentRollbackStrategyDelete || single.Path != "/admin/redeem-codes/3" || single.TargetID != "3" {
+		t.Fatalf("single array create rollback = %#v", single)
+	}
+	batch := service.prepareAgentCreateRollback(context.Background(), AIAgentActor{UserID: 1}, pending, map[string]any{"data": []any{created(3), created(4)}})
+	if batch == nil || batch.Strategy != agentRollbackStrategyPlan || len(batch.Children) != 2 {
+		t.Fatalf("batch array create rollback = %#v", batch)
+	}
+	if batch.Children[0].Path != "/admin/redeem-codes/3" || batch.Children[1].Path != "/admin/redeem-codes/4" {
+		t.Fatalf("batch rollback paths = %#v", batch.Children)
+	}
+	if operation, path, ok := service.findAgentDeleteCompensation("/admin/redeem-codes/batch-update", float64(3)); ok {
+		t.Fatalf("update action incorrectly matched create compensation: %s %s", operation.Key, path)
+	}
+}
+
 func TestAIAgentRollbackPreviewExecutesVerifiedNestedRestoreAndRetainsAuditRecord(t *testing.T) {
 	state := map[string]any{
 		"id": float64(3), "name": "Account", "concurrency": float64(10),
