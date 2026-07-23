@@ -437,6 +437,7 @@ import { useAppStore } from '@/stores'
 import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { renderAgentMarkdown } from '@/utils/agentMarkdown'
 import { shouldSendAgentComposer } from '@/utils/agentComposer'
+import { announceAIAgentEnabled } from '@/utils/agentAvailability'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -625,8 +626,7 @@ async function pollAgentState() {
 }
 
 function publishAIAgentAvailability() {
-  if (!config.value) return
-  window.dispatchEvent(new CustomEvent('ai-agent-availability-changed', { detail: { enabled: config.value.enabled } }))
+  if (config.value) announceAIAgentEnabled(config.value.enabled)
 }
 
 async function loadAgentWorkspace() {

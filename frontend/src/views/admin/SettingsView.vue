@@ -7724,6 +7724,7 @@ import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSi
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
+import { announceAIAgentEnabled, cacheAIAgentEnabled } from "@/utils/agentAvailability";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
 import {
   isRegistrationEmailSuffixDomainValid,
@@ -11176,6 +11177,7 @@ async function loadAIAgentAvailability(): Promise<void> {
   aiAgentAvailabilityLoading.value = true;
   try {
     aiAgentEnabled.value = (await aiAgentAPI.getConfig()).enabled;
+    cacheAIAgentEnabled(aiAgentEnabled.value);
   } catch (error: unknown) {
     appStore.showError(extractApiErrorMessage(error, t("admin.settings.features.aiAgent.loadFailed")));
   } finally {
@@ -11187,7 +11189,7 @@ async function updateAIAgentAvailability(enabled: boolean): Promise<void> {
   aiAgentAvailabilitySaving.value = true;
   try {
     aiAgentEnabled.value = (await aiAgentAPI.updateConfig({ enabled })).enabled;
-    window.dispatchEvent(new CustomEvent("ai-agent-availability-changed", { detail: { enabled: aiAgentEnabled.value } }));
+    announceAIAgentEnabled(aiAgentEnabled.value);
     appStore.showSuccess(t("admin.settings.features.aiAgent.saved"));
   } catch (error: unknown) {
     appStore.showError(extractApiErrorMessage(error, t("admin.settings.features.aiAgent.saveFailed")));

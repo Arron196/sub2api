@@ -198,6 +198,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import aiAgentAPI from '@/api/admin/aiAgent'
+import { AI_AGENT_AVAILABILITY_EVENT, cacheAIAgentEnabled, readCachedAIAgentEnabled } from '@/utils/agentAvailability'
 
 interface NavItem {
   path: string
@@ -250,7 +251,7 @@ const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
-const aiAgentEnabled = ref<boolean | undefined>()
+const aiAgentEnabled = ref(readCachedAIAgentEnabled())
 
 const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
 
@@ -770,7 +771,7 @@ const customMenuItemsForAdmin = computed(() => {
 const adminNavItems = computed((): NavItem[] => {
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
-    { path: '/admin/ai-agent', label: t('nav.aiAgent'), icon: AIAgentIcon, featureFlag: () => aiAgentEnabled.value ?? false },
+    { path: '/admin/ai-agent', label: t('nav.aiAgent'), icon: AIAgentIcon, featureFlag: () => aiAgentEnabled.value },
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
@@ -941,19 +942,18 @@ if (
 }
 
 async function refreshAIAgentAvailability() {
-  if (!isAdmin.value) {
-    aiAgentEnabled.value = undefined
-    return
-  }
+  if (!isAdmin.value) return
   try {
     aiAgentEnabled.value = (await aiAgentAPI.getConfig()).enabled
+    cacheAIAgentEnabled(aiAgentEnabled.value)
   } catch {
-    aiAgentEnabled.value = undefined
+    // Keep the synchronous cached value while the backend is temporarily unavailable.
   }
 }
 
 function handleAIAgentAvailability(event: Event) {
   aiAgentEnabled.value = (event as CustomEvent<{ enabled: boolean }>).detail.enabled
+  cacheAIAgentEnabled(aiAgentEnabled.value)
 }
 
 // Fetch admin settings (for feature-gated nav items like Ops).
@@ -963,15 +963,13 @@ watch(
     if (v) {
       adminSettingsStore.fetch()
       void refreshAIAgentAvailability()
-    } else {
-      aiAgentEnabled.value = undefined
     }
   },
   { immediate: true }
 )
 
 onMounted(() => {
-  window.addEventListener('ai-agent-availability-changed', handleAIAgentAvailability)
+  window.addEventListener(AI_AGENT_AVAILABILITY_EVENT, handleAIAgentAvailability)
   void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
@@ -987,7 +985,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('ai-agent-availability-changed', handleAIAgentAvailability)
+  window.removeEventListener(AI_AGENT_AVAILABILITY_EVENT, handleAIAgentAvailability)
   if (sidebarNavRef.value) {
     appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
   }
