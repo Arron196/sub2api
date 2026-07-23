@@ -551,6 +551,9 @@ function selectProtocol(protocol: AIAgentProtocol) {
 }
 
 function applySession(session: AIAgentSession) {
+  const previousConversationID = conversationId.value
+  const previousStatus = conversationStatus.value
+  const notifyNewFailure = previousConversationID === session.conversation.id && (previousStatus === 'running' || previousStatus === 'stopping') && session.conversation.status === 'error'
   conversationId.value = session.conversation.id
   localStorage.setItem(conversationStorageKey, session.conversation.id)
   conversationStatus.value = session.conversation.status
@@ -558,7 +561,7 @@ function applySession(session: AIAgentSession) {
   events.value = session.events || []
   pending.value = session.pending
   rollbacks.value = session.rollbacks || []
-  if (session.error) appStore.showError(agentErrorMessage(session.error, t('admin.aiAgent.chatFailed')))
+  if (notifyNewFailure && session.error) appStore.showError(agentErrorMessage(session.error, t('admin.aiAgent.chatFailed')))
 }
 
 async function refreshConversationList() {

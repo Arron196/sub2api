@@ -62,6 +62,13 @@ describe('AI Agent admin integration', () => {
     expect(api).toContain("'/admin/ai-agent/stop'")
   })
 
+  it('does not replay persisted conversation errors when opening history', () => {
+    const view = read('views/admin/AIAgentView.vue')
+    expect(view).toContain("previousStatus === 'running' || previousStatus === 'stopping'")
+    expect(view).toContain("session.conversation.status === 'error'")
+    expect(view).toContain('notifyNewFailure && session.error')
+  })
+
   it('routes sensitive credentials through confirmation and step-up', () => {
     const view = read('views/admin/AIAgentView.vue')
     const api = read('api/admin/aiAgent.ts')
