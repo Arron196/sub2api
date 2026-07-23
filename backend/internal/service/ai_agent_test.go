@@ -49,8 +49,8 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	if contractCount != 157 {
 		t.Fatalf("body contract count = %d, want 157", contractCount)
 	}
-	if requiredContracts != 79 {
-		t.Fatalf("required body contract count = %d, want 79", requiredContracts)
+	if requiredContracts != 84 {
+		t.Fatalf("required body contract count = %d, want 84", requiredContracts)
 	}
 	for _, endpointKey := range []string{"POST:/admin/groups", "PUT:/admin/groups/:id"} {
 		properties, _ := service.catalogByKey[endpointKey].BodySchema["properties"].(map[string]any)
@@ -74,6 +74,32 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 		if _, exists := service.catalogByKey[forbidden]; exists {
 			t.Fatalf("Agent control endpoint must not be callable as a tool: %s", forbidden)
 		}
+	}
+}
+
+func TestAIAgentCrossResourceValidationRejectsNonSubscriptionGroup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/admin/groups/7" {
+			_, _ = writer.Write([]byte(`{"code":0,"data":{"id":7,"name":"standard","subscription_type":"standard"}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	_, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	internalAuth, _ := NewAgentInternalAuth()
+	service, err := NewAIAgentService(nil, nil, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	service.client = server.Client()
+	operation := service.catalogByKey["POST:/admin/redeem-codes/generate"]
+	err = service.validateAgentCrossResourceSemantics(context.Background(), AIAgentActor{UserID: 1}, operation, map[string]any{"type": "subscription", "group_id": float64(7)})
+	if err == nil || !strings.Contains(err.Error(), "subscription group") {
+		t.Fatalf("non-subscription group validation error = %v", err)
 	}
 }
 
@@ -298,14 +324,18 @@ func TestAIAgentLargeContractsPrioritizeFieldsAndRequireExactInspection(t *testi
 		t.Fatalf("large contract projection metadata = %#v", summary)
 	}
 	session := newAIAgentSession("contract-inspection")
-	contract := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id")
+	contract := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id", "")
 	if len(contract) > agentMaxToolOutput || !strings.Contains(contract, `"body_fields_complete":true`) ||
 		!strings.Contains(contract, `"subscription_type":{"enum":["standard","subscription"]`) {
 		t.Fatalf("complete group update contract = %s", contract)
 	}
-	cached := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id")
+	cached := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id", "")
 	if !strings.Contains(cached, `"cached":true`) {
 		t.Fatalf("operation contract lookup was not cached: %s", cached)
+	}
+	nested := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id", "reasoning_effort_mappings[].from")
+	if !strings.Contains(nested, `"status":"field_contract_resolved"`) || !strings.Contains(nested, `"enum":["minimal","low","medium","high","xhigh","max"]`) {
+		t.Fatalf("nested field contract lookup = %s", nested)
 	}
 	correction := agentCapabilityClaimCorrection("更新接口未开放 subscription_type 字段，因此无法修改", 1, 0, 0)
 	if !strings.Contains(correction, "endpoint_key") || !strings.Contains(correction, "body_field_contracts") {
@@ -1405,7 +1435,7 @@ func TestAIAgentBodyContractValidatesRequiredTypesAndEnums(t *testing.T) {
 	if concurrencyContract["default"] != float64(10) || priorityContract["default"] != float64(1) {
 		t.Fatalf("account scheduling defaults are missing from contract: %#v / %#v", concurrencyContract, priorityContract)
 	}
-	contract := service.inspectAgentOperationContract(newAIAgentSession("account-contract"), "POST:/admin/accounts")
+	contract := service.inspectAgentOperationContract(newAIAgentSession("account-contract"), "POST:/admin/accounts", "")
 	if !strings.Contains(contract, `"concurrency":{"default":10`) || !strings.Contains(contract, `"priority":{"default":1`) {
 		t.Fatalf("account defaults are missing from exact contract inspection: %s", contract)
 	}
@@ -1430,6 +1460,15 @@ func TestAIAgentLargeContractsAndToolOutputsStayBounded(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	settingsSession := newAIAgentSession("settings-contract")
+	settingsContract := service.inspectAgentOperationContract(settingsSession, "PUT:/admin/settings", "")
+	if !strings.Contains(settingsContract, `"status":"contract_too_large"`) || !strings.Contains(settingsContract, "exact field path") {
+		t.Fatalf("large settings contract did not direct field inspection: %s", settingsContract)
+	}
+	settingsField := service.inspectAgentOperationContract(settingsSession, "PUT:/admin/settings", "custom_menu_items[].url")
+	if !strings.Contains(settingsField, `"status":"field_contract_resolved"`) || !strings.Contains(settingsField, `"maximum":2048`) {
+		t.Fatalf("settings field contract lookup = %s", settingsField)
 	}
 	publicSchema := publicAgentBodySchema(service.catalogByKey["PUT:/admin/settings"].BodySchema)
 	encodedSchema, _ := json.Marshal(publicSchema)

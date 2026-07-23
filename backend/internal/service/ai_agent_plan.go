@@ -147,6 +147,10 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			return nil, nil, fmt.Errorf("node %s body: %w", inputNode.ID, err)
 		}
 		previewBody, err = normalizeAgentOperationBody(operation.Method, path, previewBody)
+		requestedPreviewBody := previewBody
+		if err == nil {
+			previewBody, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, previewBody)
+		}
 		if err == nil {
 			err = validateAgentBodyContract(operation.BodySchema, previewBody, "body")
 		}
@@ -157,6 +161,18 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			return nil, nil, fmt.Errorf("node %s payload is invalid: %w", inputNode.ID, err)
 		}
 		normalizedNodeBody, err := normalizeAgentOperationBody(operation.Method, path, inputNode.Body)
+		if err == nil {
+			normalizedNodeBody, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, normalizedNodeBody)
+		}
+		if err == nil {
+			err = validateAgentBodyContract(operation.BodySchema, normalizedNodeBody, "body")
+		}
+		if err == nil {
+			err = validateAgentOperationSemantics(operation.Method, path, normalizedNodeBody)
+		}
+		if err == nil && !containsAgentPlanReference(normalizedNodeBody) {
+			err = s.validateAgentCrossResourceSemantics(ctx, actor, operation, normalizedNodeBody)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("node %s payload is invalid: %w", inputNode.ID, err)
 		}
@@ -168,6 +184,16 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			return nil, nil, fmt.Errorf("nodes %s and %s contain the same write", duplicateNode, inputNode.ID)
 		}
 		writeFingerprints[fingerprint] = inputNode.ID
+		nodePreview := agentPendingBodyPreview(requestedPreviewBody)
+		if (operation.Method == http.MethodPut || operation.Method == http.MethodPatch) && !containsAgentPlanReference(inputNode.PathParams) {
+			previewPending, previewErr := s.preparePending(ctx, actor, operation, path, inputNode.Query, normalizedNodeBody)
+			if previewErr != nil {
+				return nil, nil, fmt.Errorf("node %s current-state validation failed: %w", inputNode.ID, previewErr)
+			}
+			if len(previewPending.Changes) > 0 {
+				nodePreview = previewPending.Changes
+			}
+		}
 		sensitiveQuery := containsAgentSensitiveInput(inputNode.Query)
 		sensitiveBody := containsAgentSensitiveInput(normalizedNodeBody)
 		if sensitiveQuery && !operation.RequiresSession {
@@ -177,7 +203,7 @@ func (s *AIAgentService) prepareAgentExecutionPlan(ctx context.Context, actor AI
 			ID: inputNode.ID, EndpointKey: inputNode.EndpointKey, Operation: agentPendingOperationTitle(operation),
 			Action: agentPendingAction(operation), Resource: operation.Module, DependsOn: dependencies,
 			PathParams: inputNode.PathParams, Query: inputNode.Query, Body: normalizedNodeBody,
-			Preview: agentPendingBodyPreview(normalizedNodeBody), Status: "planned", IdempotencyKey: uuid.NewString(),
+			Preview: nodePreview, Status: "planned", IdempotencyKey: uuid.NewString(),
 			Sensitive: sensitiveQuery || sensitiveBody, RequiresStepUp: operation.RequiresSession || sensitiveQuery || sensitiveBody,
 			RequiresSession: operation.RequiresSession,
 		}
@@ -212,11 +238,15 @@ func validateAgentPlanBusinessSemantics(nodes []agentPlanNodeArgument) error {
 		byID[node.ID] = node
 	}
 	for _, node := range nodes {
-		if node.EndpointKey != "POST:/admin/redeem-codes/generate" {
-			continue
-		}
 		body, _ := node.Body.(map[string]any)
-		if !strings.EqualFold(agentInputString(body["type"]), "subscription") {
+		requiresSubscriptionGroup := false
+		switch node.EndpointKey {
+		case "POST:/admin/redeem-codes/generate", "POST:/admin/redeem-codes/create-and-redeem":
+			requiresSubscriptionGroup = strings.EqualFold(agentInputString(body["type"]), "subscription")
+		case "POST:/admin/subscriptions/assign", "POST:/admin/subscriptions/bulk-assign":
+			requiresSubscriptionGroup = true
+		}
+		if !requiresSubscriptionGroup {
 			continue
 		}
 		groupReference, ok := body["group_id"].(map[string]any)
@@ -233,7 +263,7 @@ func validateAgentPlanBusinessSemantics(nodes []agentPlanNodeArgument) error {
 		}
 		sourceBody, _ := source.Body.(map[string]any)
 		if !strings.EqualFold(agentInputString(sourceBody["subscription_type"]), "subscription") {
-			return fmt.Errorf("node %s generates a subscription redeem code from new group node %s, which must set body.subscription_type to subscription", node.ID, source.ID)
+			return fmt.Errorf("node %s requires new group node %s to set body.subscription_type to subscription", node.ID, source.ID)
 		}
 	}
 	return nil

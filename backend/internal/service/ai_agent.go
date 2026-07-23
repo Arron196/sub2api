@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"sort"
@@ -46,7 +48,10 @@ var agentCatalogJSON []byte
 //go:embed ai_agent_contracts.json
 var agentContractsJSON []byte
 
-var agentContextWindowPattern = regexp.MustCompile(`^([1-9][0-9]*)([km]?)$`)
+var (
+	agentContextWindowPattern = regexp.MustCompile(`^([1-9][0-9]*)([km]?)$`)
+	agentSemverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+)
 
 var agentInlineSecretPatterns = []struct {
 	pattern     *regexp.Regexp
@@ -1124,7 +1129,7 @@ func (s *AIAgentService) complete(ctx context.Context, config AIAgentConfig, key
 const agentSystemPrompt = `You are the built-in Sub2API administration Agent. Answer in the administrator's language.
 You may only use operations supplied in the local audited candidates or returned by search_admin_operations. Never invent an endpoint key or arbitrary URL. Never claim that an administrative capability or standalone operation is unavailable until you have checked the supplied candidates and, when necessary, searched the audited catalog for that exact capability.
 For independent batch writes or writes where a later operation consumes an ID created by an earlier operation, use plan_admin_operations once instead of issuing unrelated execute calls. Prefer one audited native batch operation when the catalog supplies an exact semantic match. Give every plan node a short unique id, declare dependencies, and reference only allow-listed outputs with {"$ref":"node_id.resource_id"} or {"$ref":"node_id.resource_name"}. Use continue_independent for independent batch work, stop_on_failure for dependent work, or rollback_on_failure when completed reversible nodes should be compensated. Do not use a plan for one ordinary operation or for unrelated commands that share no batch intent. If a submitted plan is invalid, repair and resubmit the whole plan; never fall back to executing its write nodes separately because the runtime blocks that unsafe downgrade.
-Each user message may contain locally ranked audited plans. When an intent's first candidate has high confidence and uniquely matches it, execute that candidate directly without another catalog search. When candidates are absent, ambiguous, or semantically different, you must call search_admin_operations with the exact unresolved business capability before claiming it is unsupported. Search results are nested by resource Skill and include request-contract projections plus a compact operation_manifest for the primary Skill. A candidate with body_fields_truncated=true is not a complete contract. Before claiming that a field is unavailable, call search_admin_operations with endpoint_key to inspect that operation's complete body_field_contracts. Expand a Skill once and inspect its manifest before searching again; reuse cached candidate details for equivalent queries. Search again only for a materially different capability that is not represented in the expanded manifest. Never repeat or paraphrase an equivalent search in one run.
+Each user message may contain locally ranked audited plans. When an intent's first candidate has high confidence and uniquely matches it, execute that candidate directly without another catalog search. When candidates are absent, ambiguous, or semantically different, you must call search_admin_operations with the exact unresolved business capability before claiming it is unsupported. Search results are nested by resource Skill and include request-contract projections plus a compact operation_manifest for the primary Skill. A candidate with body_fields_truncated=true is not a complete contract. Before claiming that a field is unavailable, call search_admin_operations with endpoint_key to inspect that operation's complete body_field_contracts; if the contract is too large or nested, call it again with the exact field path. Expand a Skill once and inspect its manifest before searching again; reuse cached candidate details for equivalent queries. Search again only for a materially different capability that is not represented in the expanded manifest. Never repeat or paraphrase an equivalent search in one run.
 Resolve uncertainty autonomously from the conversation, local candidates, and exact target lookups whenever possible. Ask the administrator only when resource type remains ambiguous, a name has zero or multiple exact matches, or materially different writes are still possible. If the planning context says resource clarification is required, do not call any tool; ask one concise resource question. For multiple intents, complete them in order. You may issue multiple independent tool calls in one response. In supervised mode, multiple writes are queued and confirmed one at a time.
 Follow body_example and the concise body field contract exactly. Put path parameters in path_params, query string values in query, and JSON payload in body. Treat required_fields as authoritative: do not ask for optional fields unless omitting them materially changes the requested outcome. Infer explicitly stated names and values from ordinary phrases such as “OpenAI group”, and map an unambiguous requested resource relationship to the matching enum and foreign-key field. If a required value has a documented backend default and the administrator did not override it, use that default and report it instead of asking mechanically. For account creation, preserve an explicitly supplied concurrency and priority; when omitted, set concurrency=10 and priority=1. These defaults are enforced by the runtime before confirmation, so do not ask a redundant clarification when they are absent.
 Read operations execute immediately. Writes are supervised by default and become pending actions that the administrator must confirm in the UI.
@@ -1138,12 +1143,13 @@ var agentTools = []map[string]any{
 		"type": "function",
 		"function": map[string]any{
 			"name":        "search_admin_operations",
-			"description": "Resolve an administrative capability through the hierarchical audited Skill index, or inspect one exact endpoint_key's complete request-field contract. Skill searches and contract lookups are cached per run.",
+			"description": "Resolve an administrative capability through the hierarchical audited Skill index, or inspect one exact endpoint_key's complete request-field contract. For large or nested contracts, set field to an exact path such as providers[].quota_limit. Skill searches and contract lookups are cached per run.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"query":        map[string]any{"type": "string"},
 					"endpoint_key": map[string]any{"type": "string"},
+					"field":        map[string]any{"type": "string"},
 				},
 				"additionalProperties": false,
 			},
@@ -1215,12 +1221,13 @@ func (s *AIAgentService) executeTool(ctx context.Context, actor AIAgentActor, se
 		var arguments struct {
 			Query       string `json:"query"`
 			EndpointKey string `json:"endpoint_key"`
+			Field       string `json:"field"`
 		}
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
 			return marshalAgentToolResult(map[string]any{"status": "invalid_arguments", "message": err.Error()})
 		}
 		if strings.TrimSpace(arguments.EndpointKey) != "" {
-			return s.inspectAgentOperationContract(session, arguments.EndpointKey)
+			return s.inspectAgentOperationContract(session, arguments.EndpointKey, arguments.Field)
 		}
 		return s.searchAgentCapability(session, arguments.Query)
 	case "plan_admin_operations":
@@ -1279,6 +1286,9 @@ func (s *AIAgentService) executeTool(ctx context.Context, actor AIAgentActor, se
 			return marshalAgentToolResult(map[string]any{"status": "invalid_path", "message": err.Error()})
 		}
 		arguments.Body, err = normalizeAgentOperationBody(operation.Method, path, arguments.Body)
+		if err == nil {
+			arguments.Body, err = s.hydrateAgentSingletonPutBody(ctx, actor, operation, path, arguments.Body)
+		}
 		if err == nil {
 			err = validateAgentBodyContract(operation.BodySchema, arguments.Body, "body")
 		}
@@ -1613,12 +1623,14 @@ func agentCapabilitySearchFingerprint(query string) string {
 	return strings.Join(items, "|")
 }
 
-func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, endpointKey string) string {
+func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, endpointKey, fieldPath string) string {
 	if session.inspectedContracts == nil {
 		session.inspectedContracts = make(map[string]string)
 	}
 	endpointKey = strings.TrimSpace(endpointKey)
-	if cached := session.inspectedContracts[endpointKey]; cached != "" {
+	fieldPath = strings.TrimSpace(fieldPath)
+	cacheKey := endpointKey + "\x00" + fieldPath
+	if cached := session.inspectedContracts[cacheKey]; cached != "" {
 		var result map[string]any
 		if json.Unmarshal([]byte(cached), &result) == nil {
 			result["cached"] = true
@@ -1628,6 +1640,20 @@ func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, 
 	operation, exists := s.catalogByKey[endpointKey]
 	if !exists {
 		return marshalAgentToolResult(map[string]any{"status": "invalid_operation", "message": "operation is not in the audited catalog"})
+	}
+	if fieldPath != "" {
+		fieldSchema, ok := agentSchemaAtFieldPath(operation.BodySchema, fieldPath)
+		if !ok {
+			return marshalAgentToolResult(map[string]any{"status": "invalid_field", "endpoint_key": operation.Key, "field": fieldPath, "message": "field path is not present in the complete audited contract"})
+		}
+		result := map[string]any{
+			"status": "field_contract_resolved", "endpoint_key": operation.Key, "field": fieldPath,
+			"field_contract": compactAgentSchemaField(fieldSchema), "cached": false,
+			"instruction": "This is the exact audited contract for the requested field path.",
+		}
+		encoded, _ := json.Marshal(result)
+		session.inspectedContracts[cacheKey] = string(encoded)
+		return string(encoded)
 	}
 	properties, _ := operation.BodySchema["properties"].(map[string]any)
 	fieldNames := make([]string, 0, len(properties))
@@ -1660,17 +1686,42 @@ func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, 
 		return marshalAgentToolResult(map[string]any{
 			"status": "contract_too_large", "endpoint_key": operation.Key, "body_field_count": len(fieldNames),
 			"body_field_names": fieldNames, "required_fields": required,
-			"instruction": "The complete field metadata exceeds the tool budget; all audited field names are returned. Use the matching field name or issue the operation and rely on runtime contract validation.",
+			"instruction": "The complete field metadata exceeds the tool budget; all audited top-level field names are returned. Call this tool again with endpoint_key and one exact field path to retrieve that field's complete nested contract before using it.",
 		})
 	}
-	session.inspectedContracts[endpointKey] = string(encoded)
+	session.inspectedContracts[cacheKey] = string(encoded)
 	return marshalAgentToolResult(result)
+}
+
+func agentSchemaAtFieldPath(schema map[string]any, fieldPath string) (map[string]any, bool) {
+	current := schema
+	for _, component := range strings.Split(fieldPath, ".") {
+		component = strings.TrimSpace(component)
+		array := strings.HasSuffix(component, "[]")
+		component = strings.TrimSuffix(component, "[]")
+		if component == "" {
+			return nil, false
+		}
+		properties, _ := current["properties"].(map[string]any)
+		next, ok := properties[component].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current = next
+		if array {
+			current, ok = current["items"].(map[string]any)
+			if !ok {
+				return nil, false
+			}
+		}
+	}
+	return current, true
 }
 
 func compactAgentSchemaField(value any) map[string]any {
 	field, _ := value.(map[string]any)
 	result := make(map[string]any)
-	for _, key := range []string{"type", "format", "enum", "default", "minimum", "maximum", "minLength", "maxLength", "nullable"} {
+	for _, key := range []string{"type", "format", "enum", "default", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "required", "required_any"} {
 		if item, exists := field[key]; exists {
 			result[key] = item
 		}
@@ -1682,12 +1733,14 @@ func compactAgentSchemaField(value any) map[string]any {
 		}
 	}
 	if properties, ok := field["properties"].(map[string]any); ok && len(properties) > 0 {
-		names := make([]string, 0, len(properties))
-		for name := range properties {
-			names = append(names, name)
+		compactProperties := make(map[string]any, len(properties))
+		for name, property := range properties {
+			compactProperties[name] = compactAgentSchemaField(property)
 		}
-		sort.Strings(names)
-		result["property_names"] = names
+		result["properties"] = compactProperties
+	}
+	if additional, ok := field["additionalProperties"].(map[string]any); ok {
+		result["additionalProperties"] = compactAgentSchemaField(additional)
 	}
 	return result
 }
@@ -2372,6 +2425,9 @@ func renderAgentOperationPath(operation AgentCatalogOperation, parameters map[st
 		if value == "" || value == "<nil>" {
 			return "", fmt.Errorf("missing path parameter %s", name)
 		}
+		if name == "source_type" && value != "postgres" && value != "redis" {
+			return "", errors.New("path parameter source_type must be postgres or redis")
+		}
 		path = strings.ReplaceAll(path, ":"+name, url.PathEscape(value))
 	}
 	return path, nil
@@ -2536,9 +2592,16 @@ func validateAgentBodyContract(schema map[string]any, value any, path string) er
 			}
 		}
 		properties, _ := schema["properties"].(map[string]any)
+		additionalProperties, allowsAdditionalProperties := schema["additionalProperties"].(map[string]any)
 		for field, nested := range object {
 			fieldSchema, ok := properties[field].(map[string]any)
-			if !ok || nested == nil {
+			if !ok {
+				if !allowsAdditionalProperties {
+					return fmt.Errorf("%s.%s is not a supported field", path, field)
+				}
+				fieldSchema = additionalProperties
+			}
+			if nested == nil {
 				continue
 			}
 			if err := validateAgentBodyContract(fieldSchema, nested, path+"."+field); err != nil {
@@ -2550,10 +2613,11 @@ func validateAgentBodyContract(schema map[string]any, value any, path string) er
 		if !ok {
 			return fmt.Errorf("%s must be a JSON array", path)
 		}
-		if minimum := agentInputString(schema["minimum"]); minimum != "" {
-			if minItems, err := strconv.Atoi(minimum); err == nil && len(items) < minItems {
-				return fmt.Errorf("%s must contain at least %d items", path, minItems)
-			}
+		if minimum, ok := agentContractSchemaNumber(schema["minimum"]); ok && float64(len(items)) < minimum {
+			return fmt.Errorf("%s must contain at least %s items", path, agentInputString(schema["minimum"]))
+		}
+		if maximum, ok := agentContractSchemaNumber(schema["maximum"]); ok && float64(len(items)) > maximum {
+			return fmt.Errorf("%s must contain at most %s items", path, agentInputString(schema["maximum"]))
 		}
 		itemSchema, _ := schema["items"].(map[string]any)
 		for index, item := range items {
@@ -2562,18 +2626,66 @@ func validateAgentBodyContract(schema map[string]any, value any, path string) er
 			}
 		}
 	case "string":
-		if _, ok := value.(string); !ok {
+		text, ok := value.(string)
+		if !ok {
 			return fmt.Errorf("%s must be a string", path)
+		}
+		length := float64(utf8.RuneCountInString(text))
+		if minimum, ok := agentContractSchemaNumber(schema["minimum"]); ok && length < minimum {
+			return fmt.Errorf("%s must contain at least %s characters", path, agentInputString(schema["minimum"]))
+		}
+		if maximum, ok := agentContractSchemaNumber(schema["maximum"]); ok && length > maximum {
+			return fmt.Errorf("%s must contain at most %s characters", path, agentInputString(schema["maximum"]))
+		}
+		if text != "" {
+			switch schema["format"] {
+			case "date-time":
+				if _, err := time.Parse(time.RFC3339, text); err != nil {
+					return fmt.Errorf("%s must be an RFC3339 date-time", path)
+				}
+			case "date":
+				if _, err := time.Parse("2006-01-02", text); err != nil {
+					return fmt.Errorf("%s must be a date in YYYY-MM-DD format", path)
+				}
+			case "email":
+				address, err := mail.ParseAddress(text)
+				if err != nil || address.Address != text {
+					return fmt.Errorf("%s must be a valid email address", path)
+				}
+			case "http-url":
+				parsed, err := url.Parse(text)
+				if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+					return fmt.Errorf("%s must be an absolute HTTP(S) URL", path)
+				}
+			case "semver":
+				if !agentSemverPattern.MatchString(text) {
+					return fmt.Errorf("%s must use semantic version format such as 1.2.3", path)
+				}
+			}
 		}
 	case "boolean":
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean", path)
 		}
 	case "integer", "number":
-		switch value.(type) {
-		case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
-		default:
+		number, integer, ok := agentContractNumericValue(value)
+		if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
 			return fmt.Errorf("%s must be a number", path)
+		}
+		if expectedType == "integer" && !integer {
+			return fmt.Errorf("%s must be an integer", path)
+		}
+		if minimum, ok := agentContractSchemaNumber(schema["minimum"]); ok && number < minimum {
+			return fmt.Errorf("%s must be at least %s", path, agentInputString(schema["minimum"]))
+		}
+		if maximum, ok := agentContractSchemaNumber(schema["maximum"]); ok && number > maximum {
+			return fmt.Errorf("%s must be at most %s", path, agentInputString(schema["maximum"]))
+		}
+		if minimum, ok := agentContractSchemaNumber(schema["exclusiveMinimum"]); ok && number <= minimum {
+			return fmt.Errorf("%s must be greater than %s", path, agentInputString(schema["exclusiveMinimum"]))
+		}
+		if maximum, ok := agentContractSchemaNumber(schema["exclusiveMaximum"]); ok && number >= maximum {
+			return fmt.Errorf("%s must be less than %s", path, agentInputString(schema["exclusiveMaximum"]))
 		}
 	}
 	if allowed, ok := schema["enum"].([]any); ok && len(allowed) > 0 {
@@ -2590,6 +2702,49 @@ func validateAgentBodyContract(schema map[string]any, value any, path string) er
 		return fmt.Errorf("%s must be one of: %s", path, strings.Join(values, ", "))
 	}
 	return nil
+}
+
+func agentContractSchemaNumber(value any) (float64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprint(value)), 64)
+	return number, err == nil
+}
+
+func agentContractNumericValue(value any) (number float64, integer bool, ok bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, math.Trunc(typed) == typed, true
+	case float32:
+		number = float64(typed)
+		return number, math.Trunc(number) == number, true
+	case int:
+		return float64(typed), true, true
+	case int8:
+		return float64(typed), true, true
+	case int16:
+		return float64(typed), true, true
+	case int32:
+		return float64(typed), true, true
+	case int64:
+		return float64(typed), true, true
+	case uint:
+		return float64(typed), true, true
+	case uint8:
+		return float64(typed), true, true
+	case uint16:
+		return float64(typed), true, true
+	case uint32:
+		return float64(typed), true, true
+	case uint64:
+		return float64(typed), true, true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil && math.Trunc(number) == number, err == nil
+	default:
+		return 0, false, false
+	}
 }
 
 func agentContractValueProvided(value any) bool {
@@ -2621,34 +2776,565 @@ func agentContractAlternativeProvided(value any) bool {
 }
 
 func validateAgentOperationSemantics(method, path string, body any) error {
-	if method != http.MethodPost {
-		return nil
-	}
-	switch path {
-	case "/admin/users/batch-limits", "/admin/redeem-codes/generate", "/admin/redeem-codes/create-and-redeem":
-	default:
-		return nil
-	}
 	payload, ok := body.(map[string]any)
 	if !ok {
+		if body == nil {
+			return nil
+		}
 		return errors.New("body must be a JSON object")
 	}
-	switch path {
-	case "/admin/users/batch-limits":
+
+	switch {
+	case (method == http.MethodPost && path == "/admin/accounts") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/accounts/")):
+		extra, _ := payload["extra"].(map[string]any)
+		platform := agentInputString(payload["platform"])
+		if platform != "" {
+			if err := ValidateOpenAILongContextBillingExtra(platform, extra); err != nil {
+				return err
+			}
+		}
+	case method == http.MethodPost && path == "/admin/accounts/batch":
+		accounts, _ := payload["accounts"].([]any)
+		for index, raw := range accounts {
+			account, _ := raw.(map[string]any)
+			extra, _ := account["extra"].(map[string]any)
+			if err := ValidateOpenAILongContextBillingExtra(agentInputString(account["platform"]), extra); err != nil {
+				return fmt.Errorf("body.accounts[%d]: %w", index, err)
+			}
+		}
+	case method == http.MethodPost && (path == "/admin/accounts/import/codex-session" || path == "/admin/openai/create-from-codex-pat"):
+		extra, _ := payload["extra"].(map[string]any)
+		if err := ValidateOpenAILongContextBillingExtra(PlatformOpenAI, extra); err != nil {
+			return err
+		}
+	case method == http.MethodPost && (path == "/admin/users/batch-limits" || path == "/admin/users/batch-concurrency"):
 		all, _ := payload["all"].(bool)
 		userIDs, _ := payload["user_ids"].([]any)
 		if !all && len(userIDs) == 0 {
 			return errors.New("body.user_ids is required unless body.all is true")
 		}
-	case "/admin/redeem-codes/generate", "/admin/redeem-codes/create-and-redeem":
+	case method == http.MethodPost && path == "/admin/affiliates/users/batch-rate":
+		clear, _ := payload["clear"].(bool)
+		if !clear && !agentContractValueProvided(payload["aff_rebate_rate_percent"]) {
+			return errors.New("body.aff_rebate_rate_percent is required unless body.clear is true")
+		}
+	case method == http.MethodPost && strings.HasPrefix(path, "/admin/subscriptions/") && strings.HasSuffix(path, "/reset-quota"):
+		daily, _ := payload["daily"].(bool)
+		weekly, _ := payload["weekly"].(bool)
+		monthly, _ := payload["monthly"].(bool)
+		if !daily && !weekly && !monthly {
+			return errors.New("at least one of body.daily, body.weekly, or body.monthly must be true")
+		}
+	case method == http.MethodPost && (path == "/admin/redeem-codes/generate" || path == "/admin/redeem-codes/create-and-redeem"):
 		if agentContractValueProvided(payload["expires_at"]) && agentContractValueProvided(payload["expires_in_days"]) {
 			return errors.New("body.expires_at and body.expires_in_days cannot both be set")
 		}
-		if strings.EqualFold(agentInputString(payload["type"]), "subscription") && !agentPositiveNumericValue(payload["group_id"]) {
-			return errors.New("body.group_id is required and must be positive for subscription redeem codes")
+		if expiresAt := agentInputString(payload["expires_at"]); expiresAt != "" {
+			parsed, err := time.Parse(time.RFC3339, expiresAt)
+			if err != nil || !parsed.After(time.Now()) {
+				return errors.New("body.expires_at must be an RFC3339 date-time in the future")
+			}
+		}
+		if path == "/admin/redeem-codes/create-and-redeem" && !agentNonZeroNumericValue(payload["value"]) {
+			return errors.New("body.value must not be zero")
+		}
+		if strings.EqualFold(agentInputString(payload["type"]), "subscription") {
+			if !agentPositiveNumericValue(payload["group_id"]) {
+				return errors.New("body.group_id is required and must be positive for subscription redeem codes")
+			}
+			if path == "/admin/redeem-codes/create-and-redeem" && !agentNonZeroNumericValue(payload["validity_days"]) {
+				return errors.New("body.validity_days must not be zero for subscription redeem codes")
+			}
+		}
+	case (method == http.MethodPost && path == "/admin/channels") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/channels/")):
+		if err := validateAgentChannelPricingRules(payload); err != nil {
+			return err
+		}
+	case (method == http.MethodPost && path == "/admin/groups") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/groups/")):
+		discount, discountOK := agentOptionalNumericValue(payload["batch_image_discount_multiplier"])
+		hold, holdOK := agentOptionalNumericValue(payload["batch_image_hold_multiplier"])
+		if discountOK && holdOK && hold < discount {
+			return errors.New("body.batch_image_hold_multiplier must be greater than or equal to body.batch_image_discount_multiplier")
+		}
+		mappings, _ := payload["reasoning_effort_mappings"].([]any)
+		seenSources := make(map[string]bool, len(mappings))
+		for index, raw := range mappings {
+			mapping, _ := raw.(map[string]any)
+			source := NormalizeMaxReasoningEffort(agentInputString(mapping["from"]))
+			if seenSources[source] {
+				return fmt.Errorf("body.reasoning_effort_mappings[%d].from duplicates %s", index, source)
+			}
+			seenSources[source] = true
+		}
+		if len(mappings) > 0 && agentInputString(payload["platform"]) != "" && agentInputString(payload["platform"]) != PlatformOpenAI {
+			return errors.New("body.reasoning_effort_mappings is supported only for platform openai")
+		}
+	case method == http.MethodPost && path == "/admin/accounts/batch-update-credentials":
+		field := agentInputString(payload["field"])
+		value := payload["value"]
+		if field == "intercept_warmup_requests" {
+			if _, ok := value.(bool); !ok {
+				return errors.New("body.value must be boolean when body.field is intercept_warmup_requests")
+			}
+		} else if value != nil {
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("body.value must be a string or null when body.field is %s", field)
+			}
+		}
+	case method == http.MethodPost && path == "/admin/usage/cleanup-tasks":
+		start, startErr := time.Parse("2006-01-02", agentInputString(payload["start_date"]))
+		end, endErr := time.Parse("2006-01-02", agentInputString(payload["end_date"]))
+		if startErr == nil && endErr == nil && end.Before(start) {
+			return errors.New("body.end_date must be on or after body.start_date")
+		}
+	case (method == http.MethodPost && path == "/admin/proxies") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/proxies/")):
+		if agentInputString(payload["fallback_mode"]) == "proxy" && !agentPositiveNumericValue(payload["backup_proxy_id"]) {
+			return errors.New("body.backup_proxy_id is required when body.fallback_mode is proxy")
+		}
+		if method == http.MethodPut && agentPositiveNumericValue(payload["backup_proxy_id"]) {
+			pathID := strings.TrimPrefix(path, "/admin/proxies/")
+			if pathID != ":id" && pathID == agentInputString(payload["backup_proxy_id"]) {
+				return errors.New("body.backup_proxy_id cannot identify the proxy being updated")
+			}
+		}
+	case (method == http.MethodPost && path == "/admin/payment/plans") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/payment/plans/")):
+		currency := strings.TrimSpace(agentInputString(payload["currency"]))
+		if currency != "" && (len(currency) != 3 || !regexp.MustCompile(`^[A-Za-z]{3}$`).MatchString(currency)) {
+			return errors.New("body.currency must be empty or a 3-letter ISO currency code")
+		}
+	case method == http.MethodPut && path == "/admin/payment/config":
+		if rate, exists := agentOptionalNumericValue(payload["recharge_fee_rate"]); exists && math.Round(rate*100) != rate*100 {
+			return errors.New("body.recharge_fee_rate allows at most 2 decimal places")
+		}
+	case (method == http.MethodPost && path == "/admin/ops/alert-rules") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/ops/alert-rules/")):
+		metric := agentInputString(payload["metric_type"])
+		threshold, exists := agentOptionalNumericValue(payload["threshold"])
+		if exists && agentPercentOrRateMetric(metric) && (threshold < 0 || threshold > 100) {
+			return fmt.Errorf("body.threshold must be between 0 and 100 for metric_type %s", metric)
+		}
+	case method == http.MethodPost && path == "/admin/redeem-codes/batch-update":
+		fields, _ := payload["fields"].(map[string]any)
+		selected := false
+		for _, field := range []string{"status", "expires_at", "notes", "group_id"} {
+			if _, exists := fields[field]; exists {
+				selected = true
+				break
+			}
+		}
+		if !selected {
+			return errors.New("body.fields must select at least one mutable field")
+		}
+		if expiresAt := agentInputString(fields["expires_at"]); expiresAt != "" {
+			parsed, err := time.Parse(time.RFC3339, expiresAt)
+			if err != nil || !parsed.After(time.Now()) {
+				return errors.New("body.fields.expires_at must be an RFC3339 date-time in the future")
+			}
+		}
+	case method == http.MethodPost && path == "/admin/ops/system-logs/cleanup":
+		start, startOK := agentOptionalRFC3339Time(payload["start_time"])
+		end, endOK := agentOptionalRFC3339Time(payload["end_time"])
+		if startOK && endOK && end.Before(start) {
+			return errors.New("body.end_time must be on or after body.start_time")
+		}
+	case method == http.MethodPut && (strings.HasSuffix(path, "/platform-quotas") || path == "/admin/users/:id/platform-quotas"):
+		quotas, _ := payload["quotas"].([]any)
+		seen := make(map[string]bool, len(quotas))
+		for index, raw := range quotas {
+			quota, _ := raw.(map[string]any)
+			platform := agentInputString(quota["platform"])
+			if seen[platform] {
+				return fmt.Errorf("body.quotas[%d].platform duplicates %s", index, platform)
+			}
+			seen[platform] = true
+		}
+	case (method == http.MethodPost && path == "/admin/scheduled-test-plans") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/scheduled-test-plans/")):
+		if expression := agentInputString(payload["cron_expression"]); expression != "" {
+			if _, err := scheduledTestCronParser.Parse(expression); err != nil {
+				return fmt.Errorf("body.cron_expression is invalid: %w", err)
+			}
+		}
+	case method == http.MethodPut && path == "/admin/backups/schedule":
+		expression := agentInputString(payload["cron_expr"])
+		enabled, _ := payload["enabled"].(bool)
+		if enabled && expression == "" {
+			return errors.New("body.cron_expr is required when the backup schedule is enabled")
+		}
+		if expression != "" {
+			if _, err := scheduledTestCronParser.Parse(expression); err != nil {
+				return fmt.Errorf("body.cron_expr is invalid: %w", err)
+			}
+		}
+	case method == http.MethodPost && path == "/admin/payment/providers":
+		providerKey := agentInputString(payload["provider_key"])
+		name := agentInputString(payload["name"])
+		types, _ := payload["supported_types"].([]any)
+		supported := make([]string, 0, len(types))
+		for _, value := range types {
+			supported = append(supported, agentInputString(value))
+		}
+		if err := validateProviderRequest(providerKey, name, strings.Join(supported, ",")); err != nil {
+			return err
+		}
+		if providerKey == "easypay" {
+			config := make(map[string]string)
+			if rawConfig, ok := payload["config"].(map[string]any); ok {
+				for key, value := range rawConfig {
+					config[key] = agentInputString(value)
+				}
+			}
+			if err := validateEasyPayCustomMethods(config, strings.Join(supported, ",")); err != nil {
+				return err
+			}
+		}
+	case method == http.MethodPut && path == "/admin/settings":
+		if err := validateAgentSystemSettingsPayload(payload); err != nil {
+			return err
+		}
+	case (method == http.MethodPost && path == "/admin/user-attributes") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/user-attributes/")):
+		validation, _ := payload["validation"].(map[string]any)
+		if pattern := agentInputString(validation["pattern"]); pattern != "" {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("body.validation.pattern is invalid: %w", err)
+			}
+		}
+		if minLength, minOK := agentOptionalNumericValue(validation["min_length"]); minOK {
+			if maxLength, maxOK := agentOptionalNumericValue(validation["max_length"]); maxOK && maxLength < minLength {
+				return errors.New("body.validation.max_length must be greater than or equal to min_length")
+			}
+		}
+		if minimum, minOK := agentOptionalNumericValue(validation["min"]); minOK {
+			if maximum, maxOK := agentOptionalNumericValue(validation["max"]); maxOK && maximum < minimum {
+				return errors.New("body.validation.max must be greater than or equal to min")
+			}
+		}
+	case method == http.MethodPut && path == "/admin/settings/web-search-emulation":
+		providers, _ := payload["providers"].([]any)
+		seen := make(map[string]bool, len(providers))
+		for index, raw := range providers {
+			provider, _ := raw.(map[string]any)
+			providerType := agentInputString(provider["type"])
+			if seen[providerType] {
+				return fmt.Errorf("body.providers[%d].type duplicates %s", index, providerType)
+			}
+			seen[providerType] = true
+		}
+	case method == http.MethodPut && path == "/admin/settings/beta-policy":
+		rules, _ := payload["rules"].([]any)
+		for index, raw := range rules {
+			rule, _ := raw.(map[string]any)
+			if strings.TrimSpace(agentInputString(rule["beta_token"])) == "" {
+				return fmt.Errorf("body.rules[%d].beta_token cannot be empty", index)
+			}
+			patterns, _ := rule["model_whitelist"].([]any)
+			for patternIndex, pattern := range patterns {
+				if strings.TrimSpace(agentInputString(pattern)) == "" {
+					return fmt.Errorf("body.rules[%d].model_whitelist[%d] cannot be empty", index, patternIndex)
+				}
+			}
+		}
+	case (method == http.MethodPost && path == "/admin/announcements") || (method == http.MethodPut && agentPathMatchesCollectionItem(path, "/admin/announcements/")):
+		if err := validateAgentAnnouncementTargeting(payload); err != nil {
+			return err
+		}
+	case method == http.MethodPost && path == "/admin/channel-monitors":
+		provider := agentInputString(payload["provider"])
+		apiMode := agentInputString(payload["api_mode"])
+		interval, _, _ := agentContractNumericValue(payload["interval_seconds"])
+		jitter, _, _ := agentContractNumericValue(payload["jitter_seconds"])
+		if err := validateAPIMode(provider, apiMode); err != nil {
+			return err
+		}
+		if err := validateJitter(int(jitter), int(interval)); err != nil {
+			return err
+		}
+		bodyOverride, _ := payload["body_override"].(map[string]any)
+		if err := validateBodyModeForProtocol(provider, apiMode, agentInputString(payload["body_override_mode"]), bodyOverride); err != nil {
+			return err
+		}
+	case method == http.MethodPost && path == "/admin/channel-monitor-templates":
+		bodyOverride, _ := payload["body_override"].(map[string]any)
+		if err := validateBodyModeForProtocol(agentInputString(payload["provider"]), agentInputString(payload["api_mode"]), agentInputString(payload["body_override_mode"]), bodyOverride); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateAgentAnnouncementTargeting(payload map[string]any) error {
+	targeting, _ := payload["targeting"].(map[string]any)
+	groups, _ := targeting["any_of"].([]any)
+	for groupIndex, rawGroup := range groups {
+		group, _ := rawGroup.(map[string]any)
+		conditions, _ := group["all_of"].([]any)
+		for conditionIndex, rawCondition := range conditions {
+			condition, _ := rawCondition.(map[string]any)
+			conditionType := agentInputString(condition["type"])
+			operator := agentInputString(condition["operator"])
+			switch conditionType {
+			case "subscription":
+				groupIDs, _ := condition["group_ids"].([]any)
+				if operator != "in" || len(groupIDs) == 0 {
+					return fmt.Errorf("body.targeting.any_of[%d].all_of[%d] subscription condition requires operator=in and non-empty group_ids", groupIndex, conditionIndex)
+				}
+			case "balance":
+				if operator != "gt" && operator != "gte" && operator != "lt" && operator != "lte" && operator != "eq" {
+					return fmt.Errorf("body.targeting.any_of[%d].all_of[%d] has invalid balance operator", groupIndex, conditionIndex)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateAgentSystemSettingsPayload(payload map[string]any) error {
+	requireText := func(condition bool, fields ...string) error {
+		if !condition {
+			return nil
+		}
+		for _, field := range fields {
+			if strings.TrimSpace(agentInputString(payload[field])) == "" {
+				return fmt.Errorf("body.%s is required when the related setting is enabled", field)
+			}
+		}
+		return nil
+	}
+	boolValue := func(field string) bool {
+		value, _ := payload[field].(bool)
+		return value
+	}
+	if err := requireText(boolValue("turnstile_enabled"), "turnstile_site_key"); err != nil {
+		return err
+	}
+	if boolValue("login_agreement_enabled") {
+		documents, _ := payload["login_agreement_documents"].([]any)
+		if len(documents) == 0 {
+			return errors.New("body.login_agreement_documents is required when login agreements are enabled")
+		}
+	}
+	if err := requireText(boolValue("linuxdo_connect_enabled"), "linuxdo_connect_client_id", "linuxdo_connect_redirect_url"); err != nil {
+		return err
+	}
+	if err := requireText(boolValue("dingtalk_connect_enabled"), "dingtalk_connect_client_id", "dingtalk_connect_redirect_url"); err != nil {
+		return err
+	}
+	if boolValue("wechat_connect_enabled") {
+		mpEnabled := boolValue("wechat_connect_mp_enabled")
+		mobileEnabled := boolValue("wechat_connect_mobile_enabled")
+		openEnabled := boolValue("wechat_connect_open_enabled")
+		if mpEnabled && mobileEnabled {
+			return errors.New("body.wechat_connect_mp_enabled and body.wechat_connect_mobile_enabled cannot both be true")
+		}
+		if openEnabled {
+			if err := requireText(true, "wechat_connect_open_app_id"); err != nil {
+				return err
+			}
+		}
+		if mpEnabled {
+			if err := requireText(true, "wechat_connect_mp_app_id"); err != nil {
+				return err
+			}
+		}
+		if mobileEnabled {
+			if err := requireText(true, "wechat_connect_mobile_app_id"); err != nil {
+				return err
+			}
+		}
+		if openEnabled || mpEnabled {
+			if err := requireText(true, "wechat_connect_redirect_url"); err != nil {
+				return err
+			}
+		}
+	}
+	if boolValue("oidc_connect_enabled") {
+		if err := requireText(true, "oidc_connect_client_id", "oidc_connect_issuer_url", "oidc_connect_redirect_url", "oidc_connect_frontend_redirect_url"); err != nil {
+			return err
+		}
+		if boolValue("oidc_connect_validate_id_token") {
+			if err := requireText(true, "oidc_connect_allowed_signing_algs"); err != nil {
+				return err
+			}
+		}
+	}
+	if boolValue("purchase_subscription_enabled") {
+		if err := requireText(true, "purchase_subscription_url"); err != nil {
+			return err
+		}
+	}
+	if minVersion, maxVersion := agentInputString(payload["min_codex_version"]), agentInputString(payload["max_codex_version"]); minVersion != "" && maxVersion != "" && CompareVersions(maxVersion, minVersion) < 0 {
+		return errors.New("body.max_codex_version must be greater than or equal to body.min_codex_version")
+	}
+	if minVersion, maxVersion := agentInputString(payload["min_claude_code_version"]), agentInputString(payload["max_claude_code_version"]); minVersion != "" && maxVersion != "" && CompareVersions(maxVersion, minVersion) < 0 {
+		return errors.New("body.max_claude_code_version must be greater than or equal to body.min_claude_code_version")
+	}
+	menuItems, _ := payload["custom_menu_items"].([]any)
+	seenMenuIDs := make(map[string]bool, len(menuItems))
+	menuIDPattern := regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	for index, raw := range menuItems {
+		item, _ := raw.(map[string]any)
+		id := strings.TrimSpace(agentInputString(item["id"]))
+		if id != "" {
+			if !menuIDPattern.MatchString(id) {
+				return fmt.Errorf("body.custom_menu_items[%d].id contains unsupported characters", index)
+			}
+			if seenMenuIDs[id] {
+				return fmt.Errorf("body.custom_menu_items[%d].id duplicates %s", index, id)
+			}
+			seenMenuIDs[id] = true
+		}
+		itemURL := strings.TrimSpace(agentInputString(item["url"]))
+		if strings.HasPrefix(itemURL, "md:") {
+			if strings.TrimSpace(strings.TrimPrefix(itemURL, "md:")) == "" {
+				return fmt.Errorf("body.custom_menu_items[%d].url requires a markdown slug", index)
+			}
+		} else {
+			parsed, err := url.Parse(itemURL)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				return fmt.Errorf("body.custom_menu_items[%d].url must be an absolute HTTP(S) URL or md:<slug>", index)
+			}
+		}
+	}
+	return nil
+}
+
+func agentPathMatchesCollectionItem(path, prefix string) bool {
+	if strings.Contains(path, ":") {
+		return path == strings.TrimSuffix(prefix, "/")+"/:id"
+	}
+	remainder := strings.TrimPrefix(path, prefix)
+	return remainder != path && remainder != "" && !strings.Contains(remainder, "/")
+}
+
+func agentOptionalNumericValue(value any) (float64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	number, _, ok := agentContractNumericValue(value)
+	return number, ok
+}
+
+func agentNonZeroNumericValue(value any) bool {
+	number, ok := agentOptionalNumericValue(value)
+	return ok && number != 0
+}
+
+func agentOptionalRFC3339Time(value any) (time.Time, bool) {
+	text := agentInputString(value)
+	if text == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, text)
+	return parsed, err == nil
+}
+
+func validateAgentChannelPricingRules(payload map[string]any) error {
+	modelPricing, _ := payload["model_pricing"].([]any)
+	if err := validateAgentPricingEntries(modelPricing, "body.model_pricing"); err != nil {
+		return err
+	}
+	if err := validateAgentModelMappingConflicts(payload["model_mapping"]); err != nil {
+		return err
+	}
+	rules, _ := payload["account_stats_pricing_rules"].([]any)
+	for index, rawRule := range rules {
+		rule, _ := rawRule.(map[string]any)
+		groupIDs, _ := rule["group_ids"].([]any)
+		accountIDs, _ := rule["account_ids"].([]any)
+		if len(groupIDs) == 0 && len(accountIDs) == 0 {
+			return fmt.Errorf("body.account_stats_pricing_rules[%d] must have at least one group or account", index)
+		}
+		pricing, _ := rule["pricing"].([]any)
+		if len(pricing) == 0 {
+			return fmt.Errorf("body.account_stats_pricing_rules[%d].pricing must contain at least one entry", index)
+		}
+		if err := validateAgentPricingEntries(pricing, fmt.Sprintf("body.account_stats_pricing_rules[%d].pricing", index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAgentPricingEntries(entries []any, path string) error {
+	patternsByPlatform := make(map[string][]modelEntry)
+	for _, rawEntry := range entries {
+		entry, _ := rawEntry.(map[string]any)
+		platform := agentInputString(entry["platform"])
+		models, _ := entry["models"].([]any)
+		for _, rawModel := range models {
+			patternsByPlatform[platform] = append(patternsByPlatform[platform], toModelEntry(agentInputString(rawModel)))
+		}
+	}
+	for platform, patterns := range patternsByPlatform {
+		if err := detectConflicts(patterns, platform, "MODEL_PATTERN_CONFLICT", "model patterns"); err != nil {
+			return err
+		}
+	}
+	for entryIndex, rawEntry := range entries {
+		entry, _ := rawEntry.(map[string]any)
+		billingMode := agentInputString(entry["billing_mode"])
+		intervals, _ := entry["intervals"].([]any)
+		if (billingMode == "per_request" || billingMode == "image") && !agentContractValueProvided(entry["per_request_price"]) && len(intervals) == 0 {
+			return fmt.Errorf("%s[%d] requires per_request_price or intervals for billing mode %s", path, entryIndex, billingMode)
+		}
+		type intervalRange struct {
+			minimum    float64
+			maximum    float64
+			hasMaximum bool
+		}
+		ranges := make([]intervalRange, 0, len(intervals))
+		for intervalIndex, rawInterval := range intervals {
+			interval, _ := rawInterval.(map[string]any)
+			minimum, _ := agentOptionalNumericValue(interval["min_tokens"])
+			maximum, hasMaximum := agentOptionalNumericValue(interval["max_tokens"])
+			if hasMaximum && maximum <= minimum {
+				return fmt.Errorf("%s[%d].intervals[%d].max_tokens must be greater than min_tokens", path, entryIndex, intervalIndex)
+			}
+			hasPrice := false
+			for _, field := range []string{"input_price", "output_price", "cache_write_price", "cache_read_price", "per_request_price"} {
+				if agentContractValueProvided(interval[field]) {
+					hasPrice = true
+					break
+				}
+			}
+			if !hasPrice {
+				return fmt.Errorf("%s[%d].intervals[%d] must set at least one price field", path, entryIndex, intervalIndex)
+			}
+			ranges = append(ranges, intervalRange{minimum: minimum, maximum: maximum, hasMaximum: hasMaximum})
+		}
+		if billingMode == "" || billingMode == "token" {
+			sort.Slice(ranges, func(left, right int) bool { return ranges[left].minimum < ranges[right].minimum })
+			for index := 1; index < len(ranges); index++ {
+				previous := ranges[index-1]
+				if !previous.hasMaximum || previous.maximum > ranges[index].minimum {
+					return fmt.Errorf("%s[%d].intervals contains overlapping or non-terminal unbounded ranges", path, entryIndex)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateAgentModelMappingConflicts(value any) error {
+	mapping, _ := value.(map[string]any)
+	for platform, rawPlatformMapping := range mapping {
+		platformMapping, _ := rawPlatformMapping.(map[string]any)
+		patterns := make([]modelEntry, 0, len(platformMapping))
+		for source := range platformMapping {
+			patterns = append(patterns, toModelEntry(source))
+		}
+		if err := detectConflicts(patterns, platform, "MAPPING_PATTERN_CONFLICT", "mapping source patterns"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func agentPercentOrRateMetric(metric string) bool {
+	switch metric {
+	case "success_rate", "error_rate", "upstream_error_rate", "cpu_usage_percent", "memory_usage_percent", "group_available_ratio", "group_rate_limit_ratio", "account_error_ratio":
+		return true
+	default:
+		return false
+	}
 }
 
 func agentPositiveNumericValue(value any) bool {
@@ -2785,6 +3471,53 @@ func agentTargetLabel(value map[string]any) string {
 	return ""
 }
 
+func (s *AIAgentService) hydrateAgentSingletonPutBody(ctx context.Context, actor AIAgentActor, operation AgentCatalogOperation, path string, body any) (any, error) {
+	if operation.Method != http.MethodPut || len(operation.PathParams) > 0 || len(operation.BodySchema) == 0 {
+		return body, nil
+	}
+	if _, exists := s.catalogByKey[http.MethodGet+":"+operation.Path]; !exists {
+		return body, nil
+	}
+	payload, ok := body.(map[string]any)
+	if !ok {
+		return body, nil
+	}
+	current, err := s.executeInternal(ctx, actor, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot hydrate complete singleton update from current state: %w", err)
+	}
+	before, ok := unwrapAgentData(current).(map[string]any)
+	if !ok {
+		return nil, errors.New("cannot hydrate complete singleton update: current response is not an object")
+	}
+	return mergeAgentSingletonPutBody(operation.BodySchema, before, payload), nil
+}
+
+func mergeAgentSingletonPutBody(schema, before, payload map[string]any) map[string]any {
+	properties, _ := schema["properties"].(map[string]any)
+	merged := make(map[string]any, len(properties)+len(payload))
+	for field, value := range payload {
+		merged[field] = cloneAgentValue(value)
+	}
+	for field, rawSchema := range properties {
+		if _, supplied := payload[field]; supplied {
+			continue
+		}
+		if isAgentSensitiveKey(field) {
+			continue
+		}
+		value, exists := before[field]
+		if !exists || value == nil || containsAgentSensitiveInput(value) {
+			continue
+		}
+		fieldSchema, _ := rawSchema.(map[string]any)
+		if validateAgentBodyContract(fieldSchema, value, "body."+field) == nil {
+			merged[field] = cloneAgentValue(value)
+		}
+	}
+	return merged
+}
+
 func agentPendingBodyPreview(body any) []AIAgentChange {
 	payload, ok := body.(map[string]any)
 	if !ok {
@@ -2807,7 +3540,61 @@ func agentPendingBodyPreview(body any) []AIAgentChange {
 	return preview
 }
 
+func (s *AIAgentService) validateAgentCrossResourceSemantics(ctx context.Context, actor AIAgentActor, operation AgentCatalogOperation, body any) error {
+	payload, _ := body.(map[string]any)
+	if payload == nil {
+		return nil
+	}
+	if operation.Key == "POST:/admin/settings/test-smtp" || operation.Key == "POST:/admin/settings/send-test-email" {
+		if strings.TrimSpace(agentInputString(payload["smtp_host"])) != "" {
+			return nil
+		}
+		current, err := s.executeInternal(ctx, actor, http.MethodGet, "/admin/settings", nil, nil)
+		if err != nil {
+			return fmt.Errorf("cannot verify saved SMTP configuration: %w", err)
+		}
+		settings, _ := unwrapAgentData(current).(map[string]any)
+		if strings.TrimSpace(agentInputString(settings["smtp_host"])) == "" {
+			return errors.New("body.smtp_host is required because no saved SMTP host is configured")
+		}
+		return nil
+	}
+
+	groupID, hasGroupID := agentOptionalNumericValue(payload["group_id"])
+	if !hasGroupID || groupID <= 0 {
+		return nil
+	}
+	requiresGroup := false
+	requiresSubscriptionGroup := false
+	switch operation.Key {
+	case "POST:/admin/redeem-codes/generate", "POST:/admin/redeem-codes/create-and-redeem":
+		requiresSubscriptionGroup = strings.EqualFold(agentInputString(payload["type"]), "subscription")
+		requiresGroup = requiresSubscriptionGroup
+	case "POST:/admin/subscriptions/assign", "POST:/admin/subscriptions/bulk-assign":
+		requiresGroup = true
+		requiresSubscriptionGroup = true
+	case "POST:/admin/payment/plans", "PUT:/admin/payment/plans/:id":
+		requiresGroup = true
+	}
+	if !requiresGroup {
+		return nil
+	}
+	groupPath := "/admin/groups/" + strconv.FormatInt(int64(groupID), 10)
+	current, err := s.executeInternal(ctx, actor, http.MethodGet, groupPath, nil, nil)
+	if err != nil {
+		return fmt.Errorf("body.group_id must identify an existing group: %w", err)
+	}
+	group, _ := unwrapAgentData(current).(map[string]any)
+	if requiresSubscriptionGroup && !strings.EqualFold(agentInputString(group["subscription_type"]), "subscription") {
+		return errors.New("body.group_id must identify a subscription group")
+	}
+	return nil
+}
+
 func (s *AIAgentService) preparePending(ctx context.Context, actor AIAgentActor, operation AgentCatalogOperation, path string, query map[string]any, body any) (*AIAgentPendingAction, error) {
+	if err := s.validateAgentCrossResourceSemantics(ctx, actor, operation, body); err != nil {
+		return nil, err
+	}
 	pending := &AIAgentPendingAction{
 		ID:             uuid.NewString(),
 		IdempotencyKey: uuid.NewString(),
@@ -2825,7 +3612,8 @@ func (s *AIAgentService) preparePending(ctx context.Context, actor AIAgentActor,
 	if bodyMap, ok := body.(map[string]any); ok {
 		pending.TargetLabel = agentTargetLabel(bodyMap)
 	}
-	shouldReadTarget := len(operation.PathParams) > 0 &&
+	_, hasSingletonRead := s.catalogByKey[http.MethodGet+":"+operation.Path]
+	shouldReadTarget := (len(operation.PathParams) > 0 || (len(operation.PathParams) == 0 && hasSingletonRead)) &&
 		(operation.Method == http.MethodPut || operation.Method == http.MethodPatch || operation.Method == http.MethodDelete)
 	if shouldReadTarget {
 		current, err := s.executeInternal(ctx, actor, http.MethodGet, path, nil, nil)
@@ -2837,6 +3625,16 @@ func (s *AIAgentService) preparePending(ctx context.Context, actor AIAgentActor,
 				}
 				if afterMap, afterOK := body.(map[string]any); afterOK &&
 					(operation.Method == http.MethodPut || operation.Method == http.MethodPatch) {
+					semanticBody := make(map[string]any, len(beforeMap)+len(afterMap))
+					for field, value := range beforeMap {
+						semanticBody[field] = value
+					}
+					for field, value := range afterMap {
+						semanticBody[field] = value
+					}
+					if err := validateAgentOperationSemantics(operation.Method, path, semanticBody); err != nil {
+						return nil, err
+					}
 					pending.Changes = agentRequestedChanges(beforeMap, afterMap)
 				}
 			}
@@ -2992,6 +3790,17 @@ func (s *AIAgentService) Cancel(ctx context.Context, actorUserID int64, conversa
 }
 
 func (s *AIAgentService) executePending(ctx context.Context, actor AIAgentActor, pending *AIAgentPendingAction) (any, *AIAgentRollback, error) {
+	if operation, exists := s.catalogByKey[pending.EndpointKey]; exists {
+		if err := validateAgentBodyContract(operation.BodySchema, pending.Body, "body"); err != nil {
+			return nil, nil, err
+		}
+		if err := validateAgentOperationSemantics(operation.Method, pending.Path, pending.Body); err != nil {
+			return nil, nil, err
+		}
+		if err := s.validateAgentCrossResourceSemantics(ctx, actor, operation, pending.Body); err != nil {
+			return nil, nil, err
+		}
+	}
 	result, err := s.executeInternalWithIdempotency(ctx, actor, pending.Method, pending.Path, pending.Query, pending.Body, pending.IdempotencyKey)
 	if err != nil {
 		return nil, nil, err
