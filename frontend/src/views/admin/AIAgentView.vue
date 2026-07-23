@@ -121,7 +121,7 @@
           <div class="fixed inset-x-0 bottom-0 z-20 flex-none border-t border-gray-100 bg-white/95 p-4 backdrop-blur-sm dark:border-dark-800 dark:bg-dark-900/95 sm:px-8 lg:sticky lg:inset-x-auto">
             <form class="mx-auto max-w-4xl" @submit.prevent="sendMessage">
               <div class="flex items-end gap-2 rounded-lg border border-gray-200 bg-white p-2 shadow-sm transition-shadow focus-within:border-emerald-400 focus-within:shadow-md focus-within:ring-2 focus-within:ring-emerald-500/10 dark:border-dark-600 dark:bg-dark-800">
-                <textarea v-model="prompt" rows="2" :placeholder="t('admin.aiAgent.placeholder')" :disabled="busy || !!pending" class="max-h-40 min-h-[48px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-gray-900 outline-none dark:text-white" @keydown.enter.exact.prevent="sendMessage"></textarea>
+                <textarea v-model="prompt" rows="2" :placeholder="t('admin.aiAgent.placeholder')" :disabled="busy || !!pending" class="max-h-40 min-h-[48px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-gray-900 outline-none dark:text-white" @compositionstart="composerCompositionActive = true" @compositionend="composerCompositionActive = false" @keydown="handleComposerKeydown"></textarea>
                 <button type="button" :class="['flex h-9 w-9 flex-none items-center justify-center rounded-lg text-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-40', busy ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700']" :disabled="busy ? conversationStatus === 'stopping' : (!!pending || !prompt.trim())" :title="busy ? t('admin.aiAgent.stop') : t('admin.aiAgent.send')" @click="busy ? stopGeneration() : sendMessage()">
                   <Icon :name="busy ? 'stop' : 'arrowUp'" size="sm" />
                 </button>
@@ -418,6 +418,7 @@ import aiAgentAPI, { type AIAgentConfig, type AIAgentConversationStatus, type AI
 import { useAppStore } from '@/stores'
 import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { renderAgentMarkdown } from '@/utils/agentMarkdown'
+import { shouldSendAgentComposer } from '@/utils/agentComposer'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -431,6 +432,7 @@ const conversations = ref<AIAgentConversationSummary[]>([])
 const conversationId = ref('')
 const conversationStatus = ref<AIAgentConversationStatus>('idle')
 const prompt = ref('')
+const composerCompositionActive = ref(false)
 const busy = computed(() => conversationStatus.value === 'running' || conversationStatus.value === 'stopping')
 const confirmationReady = computed(() => conversationStatus.value === 'idle')
 const hasStreamingMessage = computed(() => messages.value.some(message => message.streaming))
@@ -617,6 +619,12 @@ async function loadInitial() {
   } catch (error: any) {
     appStore.showError(agentErrorMessage(error, t('admin.aiAgent.loadFailed')))
   }
+}
+
+function handleComposerKeydown(event: KeyboardEvent) {
+  if (!shouldSendAgentComposer(event, composerCompositionActive.value)) return
+  event.preventDefault()
+  void sendMessage()
 }
 
 async function sendMessage() {

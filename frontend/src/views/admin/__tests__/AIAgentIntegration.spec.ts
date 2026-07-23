@@ -18,6 +18,14 @@ describe('AI Agent admin integration', () => {
     expect(view).toContain("t('admin.aiAgent.pendingTitle')")
   })
 
+  it('does not submit unfinished IME composition text', () => {
+    const view = read('views/admin/AIAgentView.vue')
+    expect(view).toContain('@compositionstart="composerCompositionActive = true"')
+    expect(view).toContain('@compositionend="composerCompositionActive = false"')
+    expect(view).toContain('@keydown="handleComposerKeydown"')
+    expect(view).not.toContain('@keydown.enter.exact.prevent="sendMessage"')
+  })
+
   it('keeps the composer anchored while messages scroll independently', () => {
     const view = read('views/admin/AIAgentView.vue')
     expect(view).toContain('ref="messagePane" class="min-h-0 flex-1')
