@@ -61,8 +61,10 @@
                 <div v-if="item.message.role === 'assistant'" class="mt-1 flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm">
                   <Icon name="sparkles" size="sm" />
                 </div>
-                <div :class="['max-w-[min(760px,85%)] whitespace-pre-wrap break-words rounded-lg px-4 py-3 text-sm leading-6', item.message.role === 'user' ? 'bg-gray-900 text-white shadow-sm dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-100 bg-gray-50/80 text-gray-800 dark:border-dark-700/70 dark:bg-dark-800/70 dark:text-dark-200']">
-                  {{ messageContent(item.message) }}<span v-if="item.message.streaming" class="agent-stream-cursor" aria-hidden="true"></span>
+                <div :class="['max-w-[min(760px,85%)] break-words rounded-lg px-4 py-3 text-sm leading-6', item.message.role === 'user' ? 'whitespace-pre-wrap bg-gray-900 text-white shadow-sm dark:bg-gray-100 dark:text-gray-900' : 'border border-gray-100 bg-gray-50/80 text-gray-800 dark:border-dark-700/70 dark:bg-dark-800/70 dark:text-dark-200']">
+                  <template v-if="item.message.role === 'user'">{{ messageContent(item.message) }}</template>
+                  <div v-else class="agent-markdown" v-html="renderAgentMarkdown(messageContent(item.message))"></div>
+                  <span v-if="item.message.streaming" class="agent-stream-cursor" aria-hidden="true"></span>
                 </div>
               </article>
 
@@ -415,6 +417,7 @@ import Icon from '@/components/icons/Icon.vue'
 import aiAgentAPI, { type AIAgentConfig, type AIAgentConversationStatus, type AIAgentConversationSummary, type AIAgentMessage, type AIAgentPendingAction, type AIAgentPlanNode, type AIAgentProcessEvent, type AIAgentProtocol, type AIAgentRollback, type AIAgentRollbackFieldPreview, type AIAgentRollbackPreview, type AIAgentSession } from '@/api/admin/aiAgent'
 import { useAppStore } from '@/stores'
 import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
+import { renderAgentMarkdown } from '@/utils/agentMarkdown'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -1185,6 +1188,109 @@ onUnmounted(() => {
 .agent-thinking-bars > span:nth-child(3) {
   animation-delay: 240ms;
 }
+
+.agent-markdown :deep(> :first-child) { margin-top: 0; }
+.agent-markdown :deep(> :last-child) { margin-bottom: 0; }
+.agent-markdown :deep(p) { margin: 0 0 0.65rem; }
+
+.agent-markdown :deep(h1),
+.agent-markdown :deep(h2),
+.agent-markdown :deep(h3),
+.agent-markdown :deep(h4),
+.agent-markdown :deep(h5),
+.agent-markdown :deep(h6) {
+  margin: 1rem 0 0.45rem;
+  color: rgb(17 24 39);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.dark .agent-markdown :deep(h1),
+.dark .agent-markdown :deep(h2),
+.dark .agent-markdown :deep(h3),
+.dark .agent-markdown :deep(h4),
+.dark .agent-markdown :deep(h5),
+.dark .agent-markdown :deep(h6) { color: rgb(243 244 246); }
+.agent-markdown :deep(h1) { font-size: 1.2rem; }
+.agent-markdown :deep(h2) { font-size: 1.1rem; }
+.agent-markdown :deep(h3) { font-size: 1rem; }
+.agent-markdown :deep(h4),
+.agent-markdown :deep(h5),
+.agent-markdown :deep(h6) { font-size: 0.925rem; }
+
+.agent-markdown :deep(ul),
+.agent-markdown :deep(ol) {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.35rem;
+}
+
+.agent-markdown :deep(ul) { list-style: disc; }
+.agent-markdown :deep(ol) { list-style: decimal; }
+.agent-markdown :deep(li) { margin: 0.2rem 0; }
+.agent-markdown :deep(li > ul),
+.agent-markdown :deep(li > ol) { margin: 0.2rem 0; }
+
+.agent-markdown :deep(a) {
+  color: rgb(5 150 105);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent-markdown :deep(blockquote) {
+  margin: 0.75rem 0;
+  border-left: 3px solid rgb(16 185 129);
+  padding-left: 0.8rem;
+  color: rgb(75 85 99);
+}
+.dark .agent-markdown :deep(blockquote) { color: rgb(209 213 219); }
+
+.agent-markdown :deep(code) {
+  border-radius: 4px;
+  background: rgb(229 231 235 / 0.8);
+  padding: 0.12rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82em;
+}
+.dark .agent-markdown :deep(code) { background: rgb(55 65 81 / 0.9); }
+
+.agent-markdown :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  border-radius: 6px;
+  background: rgb(17 24 39);
+  padding: 0.8rem;
+  color: rgb(243 244 246);
+  line-height: 1.55;
+}
+
+.agent-markdown :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.78rem;
+}
+
+.agent-markdown :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+}
+
+.agent-markdown :deep(th),
+.agent-markdown :deep(td) {
+  border: 1px solid rgb(209 213 219);
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.dark .agent-markdown :deep(th),
+.dark .agent-markdown :deep(td) { border-color: rgb(75 85 99); }
+.agent-markdown :deep(th) { background: rgb(229 231 235 / 0.65); font-weight: 600; }
+.dark .agent-markdown :deep(th) { background: rgb(55 65 81 / 0.75); }
+.agent-markdown :deep(hr) { margin: 0.9rem 0; border-color: rgb(209 213 219); }
 
 .agent-stream-cursor {
   display: inline-block;

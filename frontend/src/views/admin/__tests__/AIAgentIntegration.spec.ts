@@ -112,6 +112,13 @@ describe('AI Agent admin integration', () => {
     expect(api).toContain('/confirm-sensitive')
   })
 
+  it('renders sanitized Markdown for assistant messages while keeping user input as text', () => {
+    const view = read('views/admin/AIAgentView.vue')
+    expect(view).toContain('v-html="renderAgentMarkdown(messageContent(item.message))"')
+    expect(view).toContain("item.message.role === 'user'")
+    expect(view).toContain("import { renderAgentMarkdown } from '@/utils/agentMarkdown'")
+  })
+
   it('uses the dedicated authenticated admin API', () => {
     const api = read('api/admin/aiAgent.ts')
     expect(api).toContain("'/admin/ai-agent/chat'")
