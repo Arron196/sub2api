@@ -70,6 +70,10 @@ func (h *AIAgentHandler) UpdateConfig(c *gin.Context) {
 	response.Success(c, config)
 }
 
+func (h *AIAgentHandler) RollbackCapabilities(c *gin.Context) {
+	response.Success(c, gin.H{"operations": h.service.RollbackCapabilities()})
+}
+
 func (h *AIAgentHandler) ListModels(c *gin.Context) {
 	models, err := h.service.ListModels(c.Request.Context())
 	if err != nil {

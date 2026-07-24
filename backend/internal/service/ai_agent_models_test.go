@@ -109,15 +109,15 @@ func TestAIAgentModelProtocolsStreamText(t *testing.T) {
 	}{
 		{
 			name: "chat completions", protocol: agentProtocolChatCompletions, path: "/v1/chat/completions",
-			stream: "data: {\"choices\":[{\"delta\":{\"content\":\"chat \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+			stream: ": keep-alive\r\nevent: chat.completion.chunk\r\ndata: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hidden\"}}]}\r\n\r\ndata: not-json\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"chat \"}}]}\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
 		},
 		{
 			name: "responses", protocol: agentProtocolResponses, path: "/v1/responses",
-			stream: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses \"}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"responses ok\"}]}]}}\n\n",
+			stream: ": heartbeat\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"responses \"}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"reasoning\",\"id\":\"rs_compat\",\"encrypted_content\":\"opaque\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"responses ok\"}]}],\"usage\":{\"input_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":4}}}}\n\n",
 		},
 		{
 			name: "messages", protocol: agentProtocolMessages, path: "/v1/messages",
-			stream: "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"messages \"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+			stream: "event: ping\ndata: {\"type\":\"ping\"}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"messages \"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
 		},
 	}
 	for _, test := range tests {

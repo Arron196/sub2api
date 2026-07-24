@@ -19,7 +19,7 @@ export default {
           description: '使用已审计的管理接口，通过自然语言查询和管理站点。',
           configureLink: '前往 AI Agent 配置模型与执行模式',
           enabled: '启用 AI Agent',
-          enabledHint: '默认开启。关闭后停止运行中的任务、隐藏管理侧边栏入口，并拒绝新的 Agent 操作；历史记录保留。',
+          enabledHint: '默认关闭。开启并完成模型配置后才显示管理侧边栏入口；再次关闭会停止运行中的任务并拒绝新的 Agent 操作，历史记录保留。',
           loadFailed: '加载 AI Agent 开关失败',
           saveFailed: '保存 AI Agent 开关失败',
           saved: 'AI Agent 开关已保存',

@@ -119,6 +119,8 @@ type AIAgentConfig struct {
 	ContextWindowTokens int    `json:"context_window_tokens"`
 	Streaming           bool   `json:"streaming"`
 	ResponseCache       bool   `json:"response_cache"`
+	ExecutionTopology   string `json:"execution_topology"`
+	MultiInstanceSafe   bool   `json:"multi_instance_safe"`
 }
 
 type UpdateAIAgentConfigInput struct {
@@ -388,6 +390,9 @@ func NewAIAgentService(settings SettingRepository, encryptor SecretEncryptor, cf
 }
 
 func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
+	if s.settings == nil {
+		return AIAgentConfig{Enabled: false, CatalogSize: len(s.catalog), ContextWindow: agentDefaultContextWindow, ContextWindowTokens: 150000, Streaming: true, ExecutionTopology: "single_instance", MultiInstanceSafe: false}, nil
+	}
 	values, err := s.settings.GetMultiple(ctx, []string{
 		agentSettingEnabled,
 		agentSettingBaseURL,
@@ -420,6 +425,8 @@ func (s *AIAgentService) Config(ctx context.Context) (AIAgentConfig, error) {
 		ContextWindowTokens: contextWindowTokens,
 		Streaming:           true,
 		ResponseCache:       protocol == agentProtocolResponses,
+		ExecutionTopology:   "single_instance",
+		MultiInstanceSafe:   false,
 	}, nil
 }
 
@@ -500,18 +507,11 @@ func (s *AIAgentService) UpdateConfig(ctx context.Context, input UpdateAIAgentCo
 }
 
 func agentEnabledFromSetting(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return true
-	}
-	enabled, err := strconv.ParseBool(raw)
+	enabled, err := strconv.ParseBool(strings.TrimSpace(raw))
 	return err == nil && enabled
 }
 
 func (s *AIAgentService) requireEnabled(ctx context.Context) (AIAgentConfig, error) {
-	if s.settings == nil {
-		return AIAgentConfig{Enabled: true}, nil
-	}
 	config, err := s.Config(ctx)
 	if err != nil {
 		return AIAgentConfig{}, err
@@ -1748,6 +1748,9 @@ func (s *AIAgentService) inspectAgentOperationContract(session *aiAgentSession, 
 	if rules := agentOperationBusinessRules(operation); len(rules) > 0 {
 		result["business_rules"] = rules
 	}
+	if operation.Method != http.MethodGet {
+		result["rollback_support"] = s.agentRollbackCapability(operation)
+	}
 	if queryProperties, ok := operation.QuerySchema["properties"].(map[string]any); ok && len(queryProperties) > 0 {
 		queryContracts := make(map[string]any, len(queryProperties))
 		for name, schema := range queryProperties {
@@ -2198,6 +2201,14 @@ func agentOperationBusinessRules(operation AgentCatalogOperation) []map[string]a
 	case "POST:/admin/groups", "PUT:/admin/groups/:id":
 		return []map[string]any{{
 			"field": "subscription_type", "meaning": "Use subscription when this group will back user subscriptions; standard groups can still be granted through user.allowed_groups.",
+		}}
+	case "GET:/admin/groups/:id/composite-routes", "POST:/admin/groups/:id/composite-routes", "POST:/admin/groups/:id/composite-routes/preview", "PUT:/admin/groups/:id/composite-routes/:route_id", "DELETE:/admin/groups/:id/composite-routes/:route_id":
+		return []map[string]any{{
+			"precondition": "path parameter id must identify a group with platform=composite",
+		}}
+	case "GET:/admin/accounts/:id/ollama-cloud-usage", "PUT:/admin/accounts/:id/ollama-cloud-usage/session", "DELETE:/admin/accounts/:id/ollama-cloud-usage/session", "PUT:/admin/accounts/:id/ollama-cloud-usage/auto-refresh", "POST:/admin/accounts/:id/ollama-cloud-usage/refresh":
+		return []map[string]any{{
+			"precondition": "path parameter id must identify an Ollama Cloud account; saving a session also requires the server encryption key",
 		}}
 	default:
 		return nil
@@ -3091,6 +3102,10 @@ func validateAgentOperationSemantics(method, path string, body any) error {
 		}
 		if len(mappings) > 0 && agentInputString(payload["platform"]) != "" && agentInputString(payload["platform"]) != PlatformOpenAI {
 			return errors.New("body.reasoning_effort_mappings is supported only for platform openai")
+		}
+	case method == http.MethodPut && path == "/admin/accounts/ollama-cloud-usage/settings":
+		if interval, exists := agentOptionalNumericValue(payload["interval_minutes"]); exists && interval != 0 && (interval < 15 || interval > 1440) {
+			return errors.New("body.interval_minutes must be 0 or between 15 and 1440")
 		}
 	case method == http.MethodPost && path == "/admin/accounts/batch-update-credentials":
 		field := agentInputString(payload["field"])

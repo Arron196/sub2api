@@ -21,6 +21,72 @@ const (
 	agentRollbackStrategyPlan    = "rollback_plan"
 )
 
+type AIAgentRollbackCapability struct {
+	EndpointKey string   `json:"endpoint_key"`
+	Level       string   `json:"level"`
+	Strategy    string   `json:"strategy,omitempty"`
+	Conditions  []string `json:"conditions,omitempty"`
+	Limitations []string `json:"limitations,omitempty"`
+}
+
+func (s *AIAgentService) RollbackCapabilities() []AIAgentRollbackCapability {
+	capabilities := make([]AIAgentRollbackCapability, 0)
+	for _, operation := range s.catalog {
+		if operation.Method == http.MethodGet {
+			continue
+		}
+		capabilities = append(capabilities, s.agentRollbackCapability(operation))
+	}
+	sort.Slice(capabilities, func(left, right int) bool {
+		return capabilities[left].EndpointKey < capabilities[right].EndpointKey
+	})
+	return capabilities
+}
+
+func (s *AIAgentService) agentRollbackCapability(operation AgentCatalogOperation) AIAgentRollbackCapability {
+	capability := AIAgentRollbackCapability{EndpointKey: operation.Key}
+	switch operation.Method {
+	case http.MethodPut, http.MethodPatch:
+		if s.catalogHasOperation(http.MethodGet, operation.Path) {
+			capability.Level = "conditional"
+			capability.Strategy = agentRollbackStrategyRestore
+			capability.Conditions = []string{"target can be read before and after the write", "changed fields are represented in the audited response", "fresh state still matches the Agent write"}
+			capability.Limitations = []string{"later administrator changes cause drift rejection", "external side effects are not reversed"}
+			return capability
+		}
+		capability.Level = "assisted"
+		capability.Conditions = []string{"an administrator reviews and confirms a complete recovery plan"}
+		capability.Limitations = []string{"no audited same-path read exists for deterministic field restoration", "assisted recovery never auto-executes"}
+	case http.MethodPost:
+		if _, _, ok := s.findAgentDeleteCompensation(operation.Path, float64(1)); ok {
+			capability.Level = "conditional"
+			capability.Strategy = agentRollbackStrategyDelete
+			capability.Conditions = []string{"the response returns a stable resource ID", "an audited delete operation exists", "fresh state still matches the Agent-created resource"}
+			capability.Limitations = []string{"external side effects are not reversed", "bulk responses must identify every created resource"}
+			return capability
+		}
+		capability.Level = "assisted"
+		capability.Conditions = []string{"an administrator reviews and confirms a complete recovery plan"}
+		capability.Limitations = []string{"no deterministic create/delete compensation pair was found", "assisted recovery never auto-executes"}
+	case http.MethodDelete:
+		capability.Level = "unavailable"
+		capability.Limitations = []string{"the Agent does not retain a universally safe recreation snapshot", "deleted external or dependent state may be irreversible"}
+	default:
+		capability.Level = "unavailable"
+		capability.Limitations = []string{"unsupported write method"}
+	}
+	return capability
+}
+
+func (s *AIAgentService) catalogHasOperation(method, path string) bool {
+	for _, operation := range s.catalog {
+		if operation.Method == method && operation.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *AIAgentService) recoverMissingAgentPlanRollbacks(session *aiAgentSession) bool {
 	recoveredAny := false
 	for _, message := range session.model {

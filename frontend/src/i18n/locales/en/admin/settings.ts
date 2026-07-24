@@ -19,7 +19,7 @@ export default {
           description: 'Query and manage the site in natural language through audited admin operations.',
           configureLink: 'Configure the AI Agent model and execution mode',
           enabled: 'Enable AI Agent',
-          enabledHint: 'Enabled by default. Disabling stops running work, hides the admin sidebar entry, rejects new Agent operations, and retains history.',
+          enabledHint: 'Disabled by default. Enable it after configuring a model to show the admin sidebar entry. Disabling it again stops running work, rejects new Agent operations, and retains history.',
           loadFailed: 'Failed to load the AI Agent switch',
           saveFailed: 'Failed to save the AI Agent switch',
           saved: 'AI Agent switch saved',

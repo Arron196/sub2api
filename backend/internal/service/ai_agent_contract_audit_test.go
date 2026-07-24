@@ -3,7 +3,13 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -60,6 +66,7 @@ func TestValidateAgentOperationSemanticsCoversAuditedConditionalRules(t *testing
 		{name: "invalid plan currency", method: "POST", path: "/admin/payment/plans", body: map[string]any{"currency": "US"}},
 		{name: "recharge precision", method: "PUT", path: "/admin/payment/config", body: map[string]any{"recharge_fee_rate": 1.234}},
 		{name: "rate threshold range", method: "POST", path: "/admin/ops/alert-rules", body: map[string]any{"metric_type": "error_rate", "threshold": 101.0}},
+		{name: "ollama refresh interval gap", method: "PUT", path: "/admin/accounts/ollama-cloud-usage/settings", body: map[string]any{"interval_minutes": float64(10)}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -113,6 +120,122 @@ func TestMergeAgentSingletonPutBodyPreservesCurrentNonSensitiveFields(t *testing
 	}
 }
 
+func TestAIAgentCatalogMatchesRegisteredAdminRoutes(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	registered := registeredAdminRouteKeys(t)
+	catalog := make(map[string]struct{}, len(service.catalog))
+	for _, operation := range service.catalog {
+		catalog[operation.Key] = struct{}{}
+	}
+	var missing, stale []string
+	for key := range registered {
+		if _, exists := catalog[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+	for key := range catalog {
+		if _, exists := registered[key]; !exists {
+			stale = append(stale, key)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(stale)
+	if len(missing) > 0 || len(stale) > 0 {
+		t.Fatalf("Agent catalog drifted from registered admin routes\nmissing=%v\nstale=%v", missing, stale)
+	}
+}
+
+func registeredAdminRouteKeys(t *testing.T) map[string]struct{} {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve contract audit test path")
+	}
+	routeDirectory := filepath.Join(filepath.Dir(currentFile), "..", "server", "routes")
+	methods := map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
+	routes := make(map[string]struct{})
+	routeFiles, err := filepath.Glob(filepath.Join(routeDirectory, "*.go"))
+	if err != nil {
+		t.Fatalf("list route source files: %v", err)
+	}
+	for _, routeFile := range routeFiles {
+		if strings.HasSuffix(routeFile, "_test.go") {
+			continue
+		}
+		filename := filepath.Base(routeFile)
+		parsed, err := parser.ParseFile(token.NewFileSet(), routeFile, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s routes: %v", filename, err)
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil || !strings.HasPrefix(strings.ToLower(function.Name.Name), "register") || function.Name.Name == "registerAIAgentRoutes" {
+				continue
+			}
+			prefixes := map[string]string{"admin": "/admin", "v1": ""}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				switch typed := node.(type) {
+				case *ast.AssignStmt:
+					for index, right := range typed.Rhs {
+						if index >= len(typed.Lhs) {
+							continue
+						}
+						left, leftOK := typed.Lhs[index].(*ast.Ident)
+						call, callOK := right.(*ast.CallExpr)
+						if !leftOK || !callOK || len(call.Args) == 0 {
+							continue
+						}
+						selector, selectorOK := call.Fun.(*ast.SelectorExpr)
+						if !selectorOK || selector.Sel.Name != "Group" {
+							continue
+						}
+						parent, parentOK := selector.X.(*ast.Ident)
+						if !parentOK {
+							continue
+						}
+						segment, segmentOK := routeStringLiteral(call.Args[0])
+						parentPrefix, prefixOK := prefixes[parent.Name]
+						if segmentOK && prefixOK {
+							prefixes[left.Name] = strings.TrimSuffix(parentPrefix, "/") + segment
+						}
+					}
+				case *ast.CallExpr:
+					selector, selectorOK := typed.Fun.(*ast.SelectorExpr)
+					if !selectorOK || !methods[selector.Sel.Name] || len(typed.Args) == 0 {
+						return true
+					}
+					receiver, receiverOK := selector.X.(*ast.Ident)
+					if !receiverOK {
+						return true
+					}
+					path, pathOK := routeStringLiteral(typed.Args[0])
+					prefix, prefixOK := prefixes[receiver.Name]
+					if pathOK && prefixOK {
+						fullPath := strings.TrimSuffix(prefix, "/") + path
+						if strings.HasPrefix(fullPath, "/admin/") {
+							routes[selector.Sel.Name+":"+fullPath] = struct{}{}
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	return routes
+}
+
+func routeStringLiteral(expression ast.Expr) (string, bool) {
+	literal, ok := expression.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	return value, err == nil
+}
+
 func TestAIAgentWriteCatalogHasCompleteBodyClassification(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
@@ -133,8 +256,8 @@ func TestAIAgentWriteCatalogHasCompleteBodyClassification(t *testing.T) {
 			t.Errorf("bodyless operation %s still exposes a body example", operation.Key)
 		}
 	}
-	if writes != 220 || contracted != 157 || verifiedBodyless != 63 {
-		t.Fatalf("write classification = writes:%d contracts:%d bodyless:%d, want 220/157/63", writes, contracted, verifiedBodyless)
+	if writes != 229 || contracted != 163 || verifiedBodyless != 66 {
+		t.Fatalf("write classification = writes:%d contracts:%d bodyless:%d, want 229/163/66", writes, contracted, verifiedBodyless)
 	}
 }
 
@@ -174,8 +297,8 @@ func TestAIAgentRequestContractsCoverEveryCatalogOperation(t *testing.T) {
 			}
 		}
 	}
-	if len(stored) != 384 || bodies != 157 || queries != 76 || paths != 156 {
-		violations = append(violations, fmt.Sprintf("coverage entries=%d bodies=%d queries=%d paths=%d, want 384/157/76/156", len(stored), bodies, queries, paths))
+	if len(stored) != 396 || bodies != 163 || queries != 76 || paths != 166 {
+		violations = append(violations, fmt.Sprintf("coverage entries=%d bodies=%d queries=%d paths=%d, want 396/163/76/166", len(stored), bodies, queries, paths))
 	}
 	if len(violations) > 0 {
 		sort.Strings(violations)

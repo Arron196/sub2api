@@ -5,9 +5,9 @@ const storageKey = 'ai_agent_enabled'
 export function readCachedAIAgentEnabled(): boolean {
   try {
     const cached = localStorage.getItem(storageKey)
-    return cached === null ? true : cached === 'true'
+    return cached === 'true'
   } catch {
-    return true
+    return false
   }
 }
 

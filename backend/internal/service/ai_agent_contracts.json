@@ -13272,5 +13272,337 @@
         "id"
       ]
     }
+  },
+  "GET:/admin/groups/:id/composite-routes": {
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "POST:/admin/groups/:id/composite-routes": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "public_model": {
+          "type": "string",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "match_type": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "prefix"
+          ]
+        },
+        "target_platform": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "gemini",
+            "antigravity",
+            "grok"
+          ]
+        },
+        "upstream_model": {
+          "type": "string",
+          "maximum": 2048
+        },
+        "endpoint": {
+          "type": "string",
+          "enum": [
+            "any",
+            "messages",
+            "count_tokens",
+            "responses",
+            "chat_completions",
+            "embeddings",
+            "images",
+            "gemini"
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maximum": 2048
+        }
+      },
+      "required": [
+        "public_model",
+        "target_platform"
+      ]
+    },
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "POST:/admin/groups/:id/composite-routes/preview": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "endpoint": {
+          "type": "string",
+          "enum": [
+            "any",
+            "messages",
+            "count_tokens",
+            "responses",
+            "chat_completions",
+            "embeddings",
+            "images",
+            "gemini"
+          ]
+        }
+      },
+      "required": [
+        "model"
+      ]
+    },
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "PUT:/admin/groups/:id/composite-routes/:route_id": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "public_model": {
+          "type": "string",
+          "minimum": 1,
+          "maximum": 2048
+        },
+        "match_type": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "prefix"
+          ]
+        },
+        "target_platform": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "gemini",
+            "antigravity",
+            "grok"
+          ]
+        },
+        "upstream_model": {
+          "type": "string",
+          "maximum": 2048
+        },
+        "endpoint": {
+          "type": "string",
+          "enum": [
+            "any",
+            "messages",
+            "count_tokens",
+            "responses",
+            "chat_completions",
+            "embeddings",
+            "images",
+            "gemini"
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maximum": 2048
+        }
+      },
+      "required": [
+        "public_model",
+        "target_platform"
+      ]
+    },
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "route_id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "route_id"
+      ]
+    }
+  },
+  "DELETE:/admin/groups/:id/composite-routes/:route_id": {
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "route_id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "route_id"
+      ]
+    }
+  },
+  "GET:/admin/accounts/ollama-cloud-usage/settings": {},
+  "PUT:/admin/accounts/ollama-cloud-usage/settings": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1440
+        }
+      }
+    }
+  },
+  "GET:/admin/accounts/:id/ollama-cloud-usage": {
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "PUT:/admin/accounts/:id/ollama-cloud-usage/session": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "minimum": 1,
+          "maximum": 16384
+        }
+      },
+      "required": [
+        "session"
+      ]
+    },
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "DELETE:/admin/accounts/:id/ollama-cloud-usage/session": {
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "PUT:/admin/accounts/:id/ollama-cloud-usage/auto-refresh": {
+    "body_schema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    },
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "POST:/admin/accounts/:id/ollama-cloud-usage/refresh": {
+    "path_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
   }
 }

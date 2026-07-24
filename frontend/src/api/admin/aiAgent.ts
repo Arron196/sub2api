@@ -16,6 +16,16 @@ export interface AIAgentConfig {
   context_window_tokens: number
   streaming: boolean
   response_cache: boolean
+  execution_topology: 'single_instance'
+  multi_instance_safe: false
+}
+
+export interface AIAgentRollbackCapability {
+  endpoint_key: string
+  level: 'conditional' | 'assisted' | 'unavailable'
+  strategy?: 'restore_fields' | 'delete_created' | 'rollback_plan'
+  conditions?: string[]
+  limitations?: string[]
 }
 
 export interface AIAgentMessage {
@@ -194,6 +204,11 @@ const aiAgentAPI = {
   async listModels(): Promise<string[]> {
     const { data } = await apiClient.get<{ models: string[] }>('/admin/ai-agent/models')
     return data.models
+  },
+
+  async rollbackCapabilities(): Promise<AIAgentRollbackCapability[]> {
+    const { data } = await apiClient.get<{ operations: AIAgentRollbackCapability[] }>('/admin/ai-agent/rollback-capabilities')
+    return data.operations
   },
 
   async listConversations(): Promise<AIAgentConversationList> {

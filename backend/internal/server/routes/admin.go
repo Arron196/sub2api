@@ -127,6 +127,7 @@ func registerAIAgentRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	{
 		agent.GET("/config", h.Admin.AIAgent.GetConfig)
 		agent.PUT("/config", h.Admin.AIAgent.UpdateConfig)
+		agent.GET("/rollback-capabilities", h.Admin.AIAgent.RollbackCapabilities)
 		agent.GET("/conversations", h.Admin.AIAgent.ListConversations)
 		agent.DELETE("/conversations/:conversationID", h.Admin.AIAgent.DeleteConversation)
 		agent.GET("/session", h.Admin.AIAgent.GetSession)

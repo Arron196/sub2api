@@ -103,6 +103,7 @@ func writeAgentChatStream(writer http.ResponseWriter, payload string) {
 func newAIAgentHistoryTestService(t *testing.T, settings *aiAgentMemorySettings, server *httptest.Server) *AIAgentService {
 	t.Helper()
 	settings.mu.Lock()
+	settings.values[agentSettingEnabled] = "true"
 	settings.values[agentSettingBaseURL] = server.URL
 	settings.values[agentSettingModel] = "test-model"
 	settings.values[agentSettingAPIKey] = "encrypted:model-key"
@@ -526,7 +527,7 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 	_, portText, _ := net.SplitHostPort(parsed.Host)
 	port, _ := strconv.Atoi(portText)
 	settings := &aiAgentMemorySettings{values: map[string]string{
-		agentSettingBaseURL: server.URL, agentSettingModel: "test-model", agentSettingAPIKey: "encrypted:model-key",
+		agentSettingEnabled: "true", agentSettingBaseURL: server.URL, agentSettingModel: "test-model", agentSettingAPIKey: "encrypted:model-key",
 		agentSettingProtocol: agentProtocolChatCompletions, agentSettingProcessDisplay: "full", agentSettingAutoApprove: "true",
 	}}
 	internalAuth, _ := NewAgentInternalAuth()

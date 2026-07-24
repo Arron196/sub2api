@@ -6,9 +6,9 @@ describe('AI Agent availability cache', () => {
     localStorage.removeItem('ai_agent_enabled')
   })
 
-  it('shows the Agent synchronously when no setting has been cached', () => {
+  it('hides the Agent synchronously when no setting has been cached', () => {
     localStorage.removeItem('ai_agent_enabled')
-    expect(readCachedAIAgentEnabled()).toBe(true)
+    expect(readCachedAIAgentEnabled()).toBe(false)
   })
 
   it('preserves the disabled state across page refreshes', () => {

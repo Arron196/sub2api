@@ -37,7 +37,7 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
-	if got, want := len(service.catalog), 384; got != want {
+	if got, want := len(service.catalog), 396; got != want {
 		t.Fatalf("catalog size = %d, want %d", got, want)
 	}
 	accountCreate := service.catalogByKey["POST:/admin/accounts"]
@@ -59,11 +59,11 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 			}
 		}
 	}
-	if contractCount != 157 {
-		t.Fatalf("body contract count = %d, want 157", contractCount)
+	if contractCount != 163 {
+		t.Fatalf("body contract count = %d, want 163", contractCount)
 	}
-	if requiredContracts != 84 {
-		t.Fatalf("required body contract count = %d, want 84", requiredContracts)
+	if requiredContracts != 89 {
+		t.Fatalf("required body contract count = %d, want 89", requiredContracts)
 	}
 	for _, endpointKey := range []string{"POST:/admin/groups", "PUT:/admin/groups/:id"} {
 		properties, _ := service.catalogByKey[endpointKey].BodySchema["properties"].(map[string]any)
@@ -87,6 +87,39 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 		if _, exists := service.catalogByKey[forbidden]; exists {
 			t.Fatalf("Agent control endpoint must not be callable as a tool: %s", forbidden)
 		}
+	}
+}
+
+func TestAIAgentRollbackCapabilitiesCoverEveryWriteOperation(t *testing.T) {
+	service, err := NewAIAgentService(nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewAIAgentService() error = %v", err)
+	}
+	capabilities := service.RollbackCapabilities()
+	if len(capabilities) != 229 {
+		t.Fatalf("rollback capability count = %d, want 229", len(capabilities))
+	}
+	byKey := make(map[string]AIAgentRollbackCapability, len(capabilities))
+	for _, capability := range capabilities {
+		if capability.Level == "" {
+			t.Fatalf("rollback capability has no level: %#v", capability)
+		}
+		byKey[capability.EndpointKey] = capability
+	}
+	for key, expected := range map[string]AIAgentRollbackCapability{
+		"PUT:/admin/groups/:id":    {Level: "conditional", Strategy: agentRollbackStrategyRestore},
+		"POST:/admin/groups":       {Level: "conditional", Strategy: agentRollbackStrategyDelete},
+		"DELETE:/admin/groups/:id": {Level: "unavailable"},
+	} {
+		actual := byKey[key]
+		if actual.Level != expected.Level || actual.Strategy != expected.Strategy {
+			t.Fatalf("rollback capability %s = %#v, want level=%s strategy=%s", key, actual, expected.Level, expected.Strategy)
+		}
+	}
+	session := newAIAgentSession("rollback-contract")
+	contract := service.inspectAgentOperationContract(session, "PUT:/admin/groups/:id", "")
+	if !strings.Contains(contract, `"rollback_support"`) || !strings.Contains(contract, `"strategy":"restore_fields"`) {
+		t.Fatalf("exact operation contract omitted rollback support: %s", contract)
 	}
 }
 
@@ -605,7 +638,7 @@ func TestAIAgentSupervisedWritesQueueAndPromote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgentInternalAuth() error = %v", err)
 	}
-	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	settings := &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}}
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
@@ -686,7 +719,7 @@ func TestAIAgentExecutionPlanBindsDependenciesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgentInternalAuth() error = %v", err)
 	}
-	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	settings := &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}}
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
@@ -1091,7 +1124,7 @@ func TestAIAgentRollbackPreviewExecutesVerifiedNestedRestoreAndRetainsAuditRecor
 	parsed, _ := url.Parse(server.URL)
 	_, portText, _ := net.SplitHostPort(parsed.Host)
 	port, _ := strconv.Atoi(portText)
-	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	settings := &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}}
 	internalAuth, _ := NewAgentInternalAuth()
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
 	if err != nil {
@@ -1220,7 +1253,7 @@ func TestAIAgentRollbackPreviewBlocksFieldDrift(t *testing.T) {
 }
 
 func TestAIAgentRunningExecutionPlanRecoversAsStoppedAfterRestart(t *testing.T) {
-	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	settings := &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}}
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
@@ -1277,7 +1310,7 @@ func TestAIAgentConfirmedExecutionPlanRunsInBackgroundAndStops(t *testing.T) {
 	_, portText, _ := net.SplitHostPort(parsed.Host)
 	port, _ := strconv.Atoi(portText)
 	internalAuth, _ := NewAgentInternalAuth()
-	settings := &aiAgentMemorySettings{values: make(map[string]string)}
+	settings := &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}}
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, &config.Config{Server: config.ServerConfig{Port: port}}, internalAuth)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
@@ -1361,7 +1394,7 @@ func TestAIAgentContextWindowParsingAndPersistence(t *testing.T) {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
 	config, err := service.Config(context.Background())
-	if err != nil || !config.Enabled || config.ContextWindow != "150k" || config.ContextWindowTokens != 150000 {
+	if err != nil || config.Enabled || config.ContextWindow != "150k" || config.ContextWindowTokens != 150000 {
 		t.Fatalf("default context config = %#v, %v", config, err)
 	}
 	value := "1m"
@@ -1371,16 +1404,25 @@ func TestAIAgentContextWindowParsingAndPersistence(t *testing.T) {
 	}
 }
 
-func TestAIAgentEnabledDefaultsOnAndDisablingStopsWork(t *testing.T) {
+func TestAIAgentEnabledDefaultsOffAndDisablingStopsWork(t *testing.T) {
 	settings := &aiAgentMemorySettings{values: make(map[string]string)}
 	service, err := NewAIAgentService(settings, aiAgentTestEncryptor{}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
 	config, err := service.Config(context.Background())
-	if err != nil || !config.Enabled {
+	if err != nil || config.Enabled || config.ExecutionTopology != "single_instance" || config.MultiInstanceSafe {
 		t.Fatalf("default config = %#v, err=%v", config, err)
 	}
+	if _, err := service.CreateConversation(context.Background(), 1); !errors.Is(err, ErrAIAgentDisabled) {
+		t.Fatalf("default-disabled CreateConversation() error = %v", err)
+	}
+	enabled := true
+	config, err = service.UpdateConfig(context.Background(), UpdateAIAgentConfigInput{Enabled: &enabled})
+	if err != nil || !config.Enabled || settings.values[agentSettingEnabled] != "true" {
+		t.Fatalf("enabled config = %#v, stored=%q, err=%v", config, settings.values[agentSettingEnabled], err)
+	}
+
 	jobContext, cancel := context.WithCancel(context.Background())
 	service.jobs["test-job"] = cancel
 	disabled := false
@@ -1393,16 +1435,8 @@ func TestAIAgentEnabledDefaultsOnAndDisablingStopsWork(t *testing.T) {
 	default:
 		t.Fatal("disabling the Agent did not cancel running work")
 	}
-	if _, err := service.CreateConversation(context.Background(), 1); !errors.Is(err, ErrAIAgentDisabled) {
-		t.Fatalf("CreateConversation() error = %v", err)
-	}
 	if _, err := service.StartChat(context.Background(), AIAgentActor{UserID: 1}, "", "hello"); !errors.Is(err, ErrAIAgentDisabled) {
-		t.Fatalf("StartChat() error = %v", err)
-	}
-	enabled := true
-	config, err = service.UpdateConfig(context.Background(), UpdateAIAgentConfigInput{Enabled: &enabled})
-	if err != nil || !config.Enabled || settings.values[agentSettingEnabled] != "true" {
-		t.Fatalf("re-enabled config = %#v, stored=%q, err=%v", config, settings.values[agentSettingEnabled], err)
+		t.Fatalf("disabled StartChat() error = %v", err)
 	}
 }
 
@@ -1778,6 +1812,7 @@ func TestAIAgentSensitivePendingCannotUseRegularConfirmEndpoint(t *testing.T) {
 	pending := &AIAgentPendingAction{ID: "action", RequiresStepUp: true, ExpiresAt: time.Now().Add(time.Minute)}
 	conversation := &aiAgentSession{id: "conversation", pending: pending}
 	service := &AIAgentService{
+		settings: &aiAgentMemorySettings{values: map[string]string{agentSettingEnabled: "true"}},
 		sessions: map[int64]map[string]*aiAgentSession{1: {"conversation": conversation}},
 		active:   map[int64]string{1: "conversation"},
 		loaded:   map[int64]bool{1: true},
