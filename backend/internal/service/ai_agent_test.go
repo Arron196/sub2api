@@ -23,6 +23,15 @@ func agentTestOpenBodySchema() map[string]any {
 	return map[string]any{"type": "object", "additionalProperties": map[string]any{}}
 }
 
+func agentTestMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("value type = %T, want map", value)
+	}
+	return result
+}
+
 func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	service, err := NewAIAgentService(nil, nil, nil, nil)
 	if err != nil {
@@ -304,7 +313,11 @@ func TestAIAgentCompoundGroupRedeemIntentUsesGenerateCapability(t *testing.T) {
 	if err := validateAgentPlanBusinessSemantics(planNodes); err == nil || !strings.Contains(err.Error(), "subscription_type") {
 		t.Fatalf("non-subscription group plan was accepted: %v", err)
 	}
-	planNodes[0].Body.(map[string]any)["subscription_type"] = "subscription"
+	groupBody, ok := planNodes[0].Body.(map[string]any)
+	if !ok {
+		t.Fatalf("group plan body type = %T, want map", planNodes[0].Body)
+	}
+	groupBody["subscription_type"] = "subscription"
 	if err := validateAgentPlanBusinessSemantics(planNodes); err != nil {
 		t.Fatalf("valid subscription group plan was rejected: %v", err)
 	}
@@ -397,7 +410,11 @@ func TestAIAgentSubscriptionWorkflowSkillAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatalf("normalizeAgentOperationBody() error = %v", err)
 			}
-			value, _ := agentOptionalNumericValue(normalized.(map[string]any)["validity_days"])
+			normalizedBody, ok := normalized.(map[string]any)
+			if !ok {
+				t.Fatalf("normalized body type = %T, want map", normalized)
+			}
+			value, _ := agentOptionalNumericValue(normalizedBody["validity_days"])
 			if int(value) != test.want {
 				t.Fatalf("validity_days = %v, want %d", value, test.want)
 			}
@@ -423,7 +440,7 @@ func TestAIAgentAccountDefaultsPersistInExecutionPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareAgentExecutionPlan() error = %v", err)
 	}
-	body := plan.Nodes[0].Body.(map[string]any)
+	body := agentTestMap(t, plan.Nodes[0].Body)
 	if body["concurrency"] != 10 || body["priority"] != 1 {
 		t.Fatalf("account plan body lacks scheduling defaults: %#v", body)
 	}
@@ -1584,8 +1601,8 @@ func TestAIAgentSensitiveWriteRequiresConfirmationInsteadOfBlocking(t *testing.T
 	if strings.Contains(string(previewJSON), "sk-sensitive") || strings.Contains(string(previewJSON), "credentials") {
 		t.Fatalf("pending preview leaked credentials: %s", previewJSON)
 	}
-	body := session.pending.Body.(map[string]any)
-	credentials := body["credentials"].(map[string]any)
+	body := agentTestMap(t, session.pending.Body)
+	credentials := agentTestMap(t, body["credentials"])
 	if body["type"] != "apikey" || credentials["api_key"] != "sk-sensitive" || body["api_key"] != nil || body["concurrency"] != 10 || body["priority"] != 1 {
 		t.Fatalf("normalized server-side body = %#v", body)
 	}
@@ -1594,7 +1611,7 @@ func TestAIAgentSensitiveWriteRequiresConfirmationInsteadOfBlocking(t *testing.T
 		!strings.Contains(string(previewJSON), `"field":"priority"`) || !strings.Contains(string(previewJSON), `"after":1`) {
 		t.Fatalf("account defaults are missing from confirmation preview: %s", previewJSON)
 	}
-	publicBody := publicAgentPending(session.pending).Body.(map[string]any)
+	publicBody := agentTestMap(t, publicAgentPending(session.pending).Body)
 	if publicBody["credentials"] != "[REDACTED]" {
 		t.Fatalf("public pending body = %#v", publicBody)
 	}
@@ -1658,7 +1675,7 @@ func TestAIAgentAutoApproveExecutesSensitiveWriteWithoutPendingConfirmation(t *t
 	if err != nil {
 		t.Fatalf("normalize explicit account defaults: %v", err)
 	}
-	explicitBody := explicit.(map[string]any)
+	explicitBody := agentTestMap(t, explicit)
 	if explicitBody["concurrency"] != float64(7) || explicitBody["priority"] != float64(3) {
 		t.Fatalf("explicit account scheduling values were overwritten: %#v", explicitBody)
 	}
@@ -1803,7 +1820,7 @@ func TestAIAgentSensitiveFieldDetectionDoesNotBlockIDs(t *testing.T) {
 	if !containsAgentSensitiveInput(map[string]any{"profile": map[string]any{"refresh_token": "secret"}}) {
 		t.Fatal("expected nested secret to be detected")
 	}
-	redacted := redactAgentValue(map[string]any{"key": "ai_agent_conversations_7_encrypted", "value": "ciphertext"}).(map[string]any)
+	redacted := agentTestMap(t, redactAgentValue(map[string]any{"key": "ai_agent_conversations_7_encrypted", "value": "ciphertext"}))
 	if redacted["value"] != "[REDACTED]" {
 		t.Fatalf("encrypted Agent history value was not redacted: %#v", redacted)
 	}

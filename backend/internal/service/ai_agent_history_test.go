@@ -508,11 +508,12 @@ func TestAIAgentRollbackAssistanceAlwaysStagesWritesForConfirmation(t *testing.T
 				trustedManifest = strings.Contains(text, "compensation_manifest") && strings.Contains(text, "PUT:/admin/accounts/:id") && strings.Contains(text, `\"id\":3`)
 			}
 			mu.Unlock()
-			if call == 1 {
+			switch call {
+			case 1:
 				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-read","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"GET:/admin/accounts/:id\",\"path_params\":{\"id\":3}}"}}]}}]}`)
-			} else if call == 2 {
+			case 2:
 				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"recovery-write","type":"function","function":{"name":"execute_admin_operation","arguments":"{\"endpoint_key\":\"PUT:/admin/accounts/:id\",\"path_params\":{\"id\":3},\"body\":{\"concurrency\":5}}"}}]}}]}`)
-			} else {
+			default:
 				writeAgentChatStream(writer, `{"choices":[{"message":{"role":"assistant","content":"恢复方案已经生成，等待管理员确认。"}}]}`)
 			}
 		default:
@@ -597,7 +598,7 @@ func TestAIAgentStreamingMessageIsVisibleBeforeCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial \"}}]}\n\n"))
-		writer.(http.Flusher).Flush()
+		writer.(http.Flusher).Flush() //nolint:errcheck // http.Flusher has no error result to handle.
 		<-release
 		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\ndata: [DONE]\n\n"))
 	}))

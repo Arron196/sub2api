@@ -43,7 +43,7 @@ func (s *AIAgentService) sendModelRequest(ctx context.Context, config AIAgentCon
 	if err != nil {
 		return nil, fmt.Errorf("call Agent model: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	return readAgentResponse(response, 4<<20)
 }
 
@@ -63,7 +63,7 @@ func (s *AIAgentService) openAgentModelStream(ctx context.Context, config AIAgen
 		return nil, fmt.Errorf("call Agent model: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		_, readErr := readAgentResponse(response, 4<<20)
 		if readErr != nil {
 			return nil, readErr
@@ -85,7 +85,7 @@ func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConf
 	if err != nil {
 		return agentResponsesResult{}, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	var result agentResponsesResult
 	scanner := bufio.NewScanner(response.Body)
@@ -137,7 +137,7 @@ func (s *AIAgentService) streamResponses(ctx context.Context, config AIAgentConf
 		return agentResponsesResult{}, fmt.Errorf("read Agent Responses stream: %w", err)
 	}
 	if len(result.Output) == 0 {
-		return agentResponsesResult{}, errors.New("Agent Responses stream ended without a completed response")
+		return agentResponsesResult{}, errors.New("agent Responses stream ended without a completed response")
 	}
 	return result, nil
 }
@@ -165,7 +165,7 @@ func (s *AIAgentService) completeChatCompletions(ctx context.Context, config AIA
 	}
 	var completion agentCompletionResponse
 	if err := json.Unmarshal(responseBody, &completion); err != nil || len(completion.Choices) == 0 {
-		return agentModelMessage{}, errors.New("Agent Chat Completions response is invalid")
+		return agentModelMessage{}, errors.New("agent Chat Completions response is invalid")
 	}
 	return completion.Choices[0].Message, nil
 }
@@ -175,7 +175,7 @@ func (s *AIAgentService) streamChatCompletions(ctx context.Context, config AIAge
 	if err != nil {
 		return agentModelMessage{}, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	message := agentModelMessage{Role: "assistant"}
 	toolCalls := make(map[int]*agentToolCall)
 	scanner := bufio.NewScanner(response.Body)
@@ -241,7 +241,7 @@ func (s *AIAgentService) streamChatCompletions(ctx context.Context, config AIAge
 		}
 	}
 	if strings.TrimSpace(modelMessageText(message.Content)) == "" && len(message.ToolCalls) == 0 {
-		return agentModelMessage{}, errors.New("Agent Chat Completions stream ended without content")
+		return agentModelMessage{}, errors.New("agent Chat Completions stream ended without content")
 	}
 	return message, nil
 }
@@ -289,7 +289,7 @@ func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentCo
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Output) == 0 {
-			return agentModelMessage{}, errors.New("Agent Responses response is invalid")
+			return agentModelMessage{}, errors.New("agent Responses response is invalid")
 		}
 		result = agentResponsesResult{Output: response.Output, InputTokens: response.Usage.InputTokens, CachedInputTokens: response.Usage.InputTokenDetails.CachedTokens}
 	} else {
@@ -339,7 +339,7 @@ func (s *AIAgentService) completeResponses(ctx context.Context, config AIAgentCo
 	}
 	message.Content = strings.Join(textParts, "\n")
 	if len(message.ToolCalls) == 0 && strings.TrimSpace(strings.Join(textParts, "")) == "" {
-		return agentModelMessage{}, errors.New("Agent Responses response contained no text or tool calls")
+		return agentModelMessage{}, errors.New("agent Responses response contained no text or tool calls")
 	}
 	return message, nil
 }
@@ -397,7 +397,7 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 	if config.ThinkingMode != "" {
 		if budget, err := strconv.Atoi(config.ThinkingMode); err == nil {
 			if budget < 1024 || budget > 128000 {
-				return agentModelMessage{}, errors.New("Messages thinking budget must be between 1024 and 128000 tokens")
+				return agentModelMessage{}, errors.New("messages thinking budget must be between 1024 and 128000 tokens")
 			}
 			payload["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
 			maxTokens = budget + 4096
@@ -418,7 +418,7 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 		Content []json.RawMessage `json:"content"`
 	}
 	if err := json.Unmarshal(responseBody, &response); err != nil || len(response.Content) == 0 {
-		return agentModelMessage{}, errors.New("Agent Messages response is invalid")
+		return agentModelMessage{}, errors.New("agent Messages response is invalid")
 	}
 	message := agentModelMessage{Role: "assistant", AnthropicContent: response.Content}
 	var textParts []string
@@ -448,7 +448,7 @@ func (s *AIAgentService) completeMessages(ctx context.Context, config AIAgentCon
 	}
 	message.Content = strings.Join(textParts, "\n")
 	if len(message.ToolCalls) == 0 && strings.TrimSpace(strings.Join(textParts, "")) == "" {
-		return agentModelMessage{}, errors.New("Agent Messages response contained no text or tool calls")
+		return agentModelMessage{}, errors.New("agent Messages response contained no text or tool calls")
 	}
 	return message, nil
 }
@@ -458,7 +458,7 @@ func (s *AIAgentService) streamMessages(ctx context.Context, config AIAgentConfi
 	if err != nil {
 		return agentModelMessage{}, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	blocks := make(map[int]map[string]any)
 	inputJSON := make(map[int]string)
 	scanner := bufio.NewScanner(response.Body)
@@ -527,7 +527,7 @@ func (s *AIAgentService) streamMessages(ctx context.Context, config AIAgentConfi
 		if partial := inputJSON[index]; partial != "" {
 			var input any
 			if json.Unmarshal([]byte(partial), &input) != nil {
-				return agentModelMessage{}, errors.New("Agent Messages tool input stream is invalid")
+				return agentModelMessage{}, errors.New("agent Messages tool input stream is invalid")
 			}
 			block["input"] = input
 		}
@@ -551,7 +551,7 @@ func (s *AIAgentService) streamMessages(ctx context.Context, config AIAgentConfi
 		}
 	}
 	if strings.TrimSpace(modelMessageText(message.Content)) == "" && len(message.ToolCalls) == 0 {
-		return agentModelMessage{}, errors.New("Agent Messages stream ended without content")
+		return agentModelMessage{}, errors.New("agent Messages stream ended without content")
 	}
 	return message, nil
 }

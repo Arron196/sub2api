@@ -503,7 +503,7 @@ func validateAgentContextContinuity(original, compacted []agentModelMessage) err
 			}
 		}
 		if !found {
-			return errors.New("Agent context compression could not preserve the current user objective")
+			return errors.New("agent context compression could not preserve the current user objective")
 		}
 	}
 	frontier := agentActiveToolFrontier(original)
@@ -519,13 +519,13 @@ func validateAgentContextContinuity(original, compacted []agentModelMessage) err
 		}
 	}
 	if compactedFrontier < 0 || len(original)-frontier != len(compacted)-compactedFrontier {
-		return errors.New("Agent context compression could not preserve the active tool chain")
+		return errors.New("agent context compression could not preserve the active tool chain")
 	}
 	for offset := 0; offset < len(original)-frontier; offset++ {
 		before, _ := json.Marshal(agentModelMessageContextValue(original[frontier+offset]))
 		after, _ := json.Marshal(agentModelMessageContextValue(compacted[compactedFrontier+offset]))
 		if string(before) != string(after) {
-			return errors.New("Agent context compression changed the active tool chain")
+			return errors.New("agent context compression changed the active tool chain")
 		}
 	}
 	return nil

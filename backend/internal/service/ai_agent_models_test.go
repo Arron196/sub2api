@@ -137,7 +137,7 @@ func TestAIAgentModelProtocolsStreamText(t *testing.T) {
 			service := &AIAgentService{client: server.Client()}
 			var deltas strings.Builder
 			message, err := service.complete(context.Background(), AIAgentConfig{BaseURL: server.URL, Model: "test-model", Protocol: test.protocol}, "model-key", []agentModelMessage{{Role: "user", Content: "hello"}}, func(delta string) {
-				deltas.WriteString(delta)
+				_, _ = deltas.WriteString(delta)
 			})
 			if err != nil {
 				t.Fatalf("complete stream: %v", err)

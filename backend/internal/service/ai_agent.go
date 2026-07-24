@@ -567,11 +567,11 @@ func normalizeAIAgentContextWindow(raw string) (string, int, error) {
 	}
 	matches := agentContextWindowPattern.FindStringSubmatch(value)
 	if len(matches) != 3 {
-		return "", 0, errors.New("Agent context window must use a value such as 150k or 1m")
+		return "", 0, errors.New("agent context window must use a value such as 150k or 1m")
 	}
 	amount, err := strconv.ParseInt(matches[1], 10, 64)
 	if err != nil {
-		return "", 0, errors.New("Agent context window is too large")
+		return "", 0, errors.New("agent context window is too large")
 	}
 	multiplier := int64(1)
 	switch matches[2] {
@@ -581,11 +581,11 @@ func normalizeAIAgentContextWindow(raw string) (string, int, error) {
 		multiplier = 1000000
 	}
 	if amount > 8000000/multiplier {
-		return "", 0, errors.New("Agent context window must not exceed 8m")
+		return "", 0, errors.New("agent context window must not exceed 8m")
 	}
 	tokens := amount * multiplier
 	if tokens < 16000 || tokens > 8000000 {
-		return "", 0, errors.New("Agent context window must be between 16k and 8m")
+		return "", 0, errors.New("agent context window must be between 16k and 8m")
 	}
 	normalized := strconv.FormatInt(tokens, 10)
 	if tokens%1000000 == 0 {
@@ -599,11 +599,11 @@ func normalizeAIAgentContextWindow(raw string) (string, int, error) {
 func normalizeAIAgentThinkingMode(raw string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	if len(mode) > 64 {
-		return "", errors.New("Agent thinking mode is too long")
+		return "", errors.New("agent thinking mode is too long")
 	}
 	for _, character := range mode {
 		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '-' && character != '.' {
-			return "", errors.New("Agent thinking mode contains unsupported characters")
+			return "", errors.New("agent thinking mode contains unsupported characters")
 		}
 	}
 	return mode, nil
@@ -678,7 +678,7 @@ func (s *AIAgentService) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch models: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	payload, err := readAgentResponse(response, 2<<20)
 	if err != nil {
 		return nil, err
@@ -960,7 +960,7 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 			content := strings.TrimSpace(modelMessageText(message.Content))
 			if content == "" {
 				conversation.mu.Unlock()
-				s.finishChat(actor.UserID, conversation, config.ProcessDisplay, errors.New("Agent returned an empty response"))
+				s.finishChat(actor.UserID, conversation, config.ProcessDisplay, errors.New("agent returned an empty response"))
 				return
 			}
 			if correction := agentCapabilityClaimCorrection(content, len(conversation.capabilitySearches), len(conversation.inspectedContracts), conversation.capabilityCorrections); correction != "" && round+1 < agentMaxToolRounds {
@@ -1026,7 +1026,7 @@ func (s *AIAgentService) runChat(ctx context.Context, actor AIAgentActor, conver
 			}
 		}
 	}
-	s.finishChat(actor.UserID, conversation, config.ProcessDisplay, errors.New("Agent exceeded the tool-call round limit"))
+	s.finishChat(actor.UserID, conversation, config.ProcessDisplay, errors.New("agent exceeded the tool-call round limit"))
 }
 
 func setAgentStreamingMessage(conversation *aiAgentSession, messageID, content string, streaming bool) {
@@ -2449,7 +2449,7 @@ func agentSearchSubsequence(needle, haystack string) bool {
 		return false
 	}
 	index := 0
-	for _, current := range []rune(agentSearchNoisePattern.ReplaceAllString(haystack, "")) {
+	for _, current := range agentSearchNoisePattern.ReplaceAllString(haystack, "") {
 		if current == wanted[index] {
 			index++
 			if index == len(wanted) {
@@ -4087,7 +4087,7 @@ func (s *AIAgentService) executeInternalWithIdempotency(ctx context.Context, act
 			return nil, err
 		}
 		if len(encoded) > 256<<10 {
-			return nil, errors.New("Agent operation body exceeds 256 KiB")
+			return nil, errors.New("agent operation body exceeds 256 KiB")
 		}
 		reader = bytes.NewReader(encoded)
 	}
@@ -4118,7 +4118,7 @@ func (s *AIAgentService) executeInternalWithIdempotency(ctx context.Context, act
 	if err != nil {
 		return nil, fmt.Errorf("execute internal admin API: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 2<<20+1))
 	if err != nil {
 		return nil, err

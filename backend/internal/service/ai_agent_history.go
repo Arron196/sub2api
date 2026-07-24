@@ -137,7 +137,7 @@ func (s *AIAgentService) conversation(ctx context.Context, userID int64, convers
 		return conversation, nil
 	}
 	if !create {
-		return nil, errors.New("Agent conversation not found")
+		return nil, errors.New("agent conversation not found")
 	}
 	conversation := newAIAgentSession("New conversation")
 	s.sessions[userID][conversation.id] = conversation
@@ -196,7 +196,7 @@ func (s *AIAgentService) DeleteConversation(ctx context.Context, userID int64, c
 	s.sessionsMu.Lock()
 	if s.sessions[userID][conversationID] == nil {
 		s.sessionsMu.Unlock()
-		return errors.New("Agent conversation not found")
+		return errors.New("agent conversation not found")
 	}
 	delete(s.sessions[userID], conversationID)
 	if s.active[userID] == conversationID {
