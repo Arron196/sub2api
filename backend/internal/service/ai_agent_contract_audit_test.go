@@ -297,8 +297,8 @@ func TestAIAgentRequestContractsCoverEveryCatalogOperation(t *testing.T) {
 			}
 		}
 	}
-	if len(stored) != 396 || bodies != 163 || queries != 76 || paths != 166 {
-		violations = append(violations, fmt.Sprintf("coverage entries=%d bodies=%d queries=%d paths=%d, want 396/163/76/166", len(stored), bodies, queries, paths))
+	if len(stored) != 397 || bodies != 163 || queries != 76 || paths != 166 {
+		violations = append(violations, fmt.Sprintf("coverage entries=%d bodies=%d queries=%d paths=%d, want 397/163/76/166", len(stored), bodies, queries, paths))
 	}
 	if len(violations) > 0 {
 		sort.Strings(violations)

@@ -37,7 +37,7 @@ func TestAIAgentCatalogSnapshotContainsAuditedAdminRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAIAgentService() error = %v", err)
 	}
-	if got, want := len(service.catalog), 396; got != want {
+	if got, want := len(service.catalog), 397; got != want {
 		t.Fatalf("catalog size = %d, want %d", got, want)
 	}
 	accountCreate := service.catalogByKey["POST:/admin/accounts"]

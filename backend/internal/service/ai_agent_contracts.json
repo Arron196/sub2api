@@ -3619,6 +3619,7 @@
     }
   },
   "GET:/admin/groups/capacity-summary": {},
+  "GET:/admin/groups/live-capability": {},
   "PUT:/admin/groups/sort-order": {
     "body_schema": {
       "properties": {
